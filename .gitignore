@@ -1,0 +1,4 @@
+# Artifacts of installing skills INTO this repo — this repo is a skill source,
+# so `npx skills add` should only ever be run against it, not inside it.
+.agents/
+skills-lock.json
