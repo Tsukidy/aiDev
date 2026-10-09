@@ -109,14 +109,14 @@ async function resolveProjectRoot(projectId: string, paseo: PaseoApi): Promise<s
 type RunResult =
 	| { kind: "absent" }
 	| { kind: "failed"; exit: number; stderr: string }
-	| { kind: "ok"; exit: number };
+	| { kind: "ok" };
 
 /** Run a command in a directory; never throws — every outcome is a typed result. */
 function run(command: string, args: string[], cwd: string, signal: AbortSignal): Promise<RunResult> {
 	return new Promise((resolve) => {
 		execFile(command, args, { cwd, signal, encoding: "utf8" }, (error, _stdout, stderr) => {
 			if (error === null) {
-				resolve({ kind: "ok", exit: 0 });
+				resolve({ kind: "ok" });
 				return;
 			}
 			const code = (error as NodeJS.ErrnoException).code;

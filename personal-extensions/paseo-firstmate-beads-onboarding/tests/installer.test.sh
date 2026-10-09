@@ -142,6 +142,19 @@ run_installer "$s"
 check "running twice installs the block exactly once" \
 	test "$(grep -c 'paseo-beads-onboarding:start' "$tmp/idem-home/data/captain.md")" -eq 1
 
+s=$(make_sandbox truncated "{\"home\": \"$tmp/trunc-home\"}" "$tmp/trunc-home")
+run_installer "$s"
+# Simulate a prior append cut off mid-block: keep everything up to the start marker.
+line=$(grep -n 'paseo-beads-onboarding:start' "$tmp/trunc-home/data/captain.md" | cut -d: -f1)
+head -n "$line" "$tmp/trunc-home/data/captain.md" >"$tmp/truncated.md" && mv "$tmp/truncated.md" "$tmp/trunc-home/data/captain.md"
+if run_installer "$s"; then
+	check "a truncated prior block (start without end) is refused" false
+else
+	check "a truncated prior block (start without end) is refused" test -s "$tmp/stderr.txt"
+fi
+check "the truncated file was not appended to" \
+	test "$(grep -c 'paseo-beads-onboarding' "$tmp/trunc-home/data/captain.md")" -eq 1
+
 s=$(make_sandbox preserve "{\"home\": \"$tmp/pres-home\"}" "$tmp/pres-home")
 printf '# Standing orders\n\nNever push to main.\n' >"$tmp/pres-home/data/captain.md"
 run_installer "$s"
@@ -175,6 +188,29 @@ check "the home store marker exists after install" test -f "$tmp/homedb-home/.be
 : >"$bdlog"
 run_installer "$s"
 check "second install does not re-init the home database" test "$(grep -c '^init|' "$bdlog")" -eq 0
+
+# A failed home init must not forfeit the standing orders (the behavioral half).
+mkdir -p "$tmp/stubs-broken"
+cat >"$tmp/stubs-broken/bd" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+ready) exit 1 ;;
+init) exit 4 ;;
+esac
+exit 0
+STUB
+chmod +x "$tmp/stubs-broken/bd"
+s=$(make_sandbox failedinit "{\"home\": \"$tmp/failedinit-home\"}" "$tmp/failedinit-home")
+(
+	cd "$s" || exit 1
+	export PASEO_HOME="$s/paseo-home"
+	export HOME="$s/crew-home"
+	export PATH="$tmp/stubs-broken:$PATH"
+	bash "$installer" >/dev/null 2>"$tmp/stderr.txt"
+)
+check "a failed home init still installs the standing orders" \
+	captain_has_one_block "$tmp/failedinit-home/data/captain.md"
+check "the failed init is reported on stderr" test -s "$tmp/stderr.txt"
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

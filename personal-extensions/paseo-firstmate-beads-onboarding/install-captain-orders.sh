@@ -70,9 +70,12 @@ fi
 if command -v bd >/dev/null 2>&1; then
 	if (cd "$home" && bd ready >/dev/null 2>&1); then
 		printf 'home memory database already exists at %s\n' "$home"
-	else
-		(cd "$home" && bd init --quiet --stealth)
+	# A failed init must not forfeit the standing orders: the database can be
+	# created by re-running this installer; the behavioral half goes in now.
+	elif (cd "$home" && bd init --quiet --stealth); then
 		printf 'created the mate-global memory database in %s (.beads/ — back it up; there is no other copy)\n' "$home"
+	else
+		printf 'bd init failed for the home memory database — the standing orders are still installed below; install beads properly and re-run this installer to create the database\n' >&2
 	fi
 else
 	printf 'bd not found on PATH — the home memory database was NOT created; install beads and re-run this installer\n' >&2
@@ -86,8 +89,11 @@ if [ ! -f "$target" ]; then
 fi
 
 if grep -qF 'paseo-beads-onboarding:start' "$target"; then
-	printf 'standing orders already installed at %s — no change\n' "$target"
-	exit 0
+	if grep -qF 'paseo-beads-onboarding:end' "$target"; then
+		printf 'standing orders already installed at %s — no change\n' "$target"
+		exit 0
+	fi
+	die "a truncated orders block (start marker without end) exists at $target — remove the partial block and re-run"
 fi
 
 cat >>"$target" <<'ORDERS'

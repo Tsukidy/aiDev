@@ -62,7 +62,9 @@ unrelated pre-staged files in the index at that moment — onboard only with a
 clean index; `--quiet` is not silent, the exit code is the one reliable signal;
 `--stealth` in the mate's home silently `git init`s a non-git home (harmless)
 and the home database has no sync or backup — its `.beads/` is the only copy,
-so include it in host backups.
+so include it in host backups. Operator hygiene, decided at install time, not
+by this delivery: bd ships anonymous metrics on by default (command names,
+version, OS only) — `bd metrics off` disables them machine-wide.
 
 ## Verification
 
