@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Tests for verify-curation.mjs — the curation gate from spec #11, ticket #12.
-# The checker is driven against synthetic fixture trees built in a temporary
-# directory (one per rule: duplicates, each unresolvable reference syntax,
-# unparseable frontmatter, the pstack: ban) plus a positive control showing a
-# carried agent definition satisfies the agent-reference rule, and finally
-# against the repo's real skills/ tree — the ticket's acceptance criterion
-# "passes on the current pre-curation tree".
+# The suite for spec #11's two repo-owned seams: verify-curation.mjs (the
+# curation gate from ticket #12 — driven against synthetic fixture trees built
+# in a temporary directory, one per rule: duplicates, each unresolvable
+# reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
+# control showing a carried agent definition satisfies the agent-reference
+# rule, and finally against the repo's real skills/ tree) and the
+# standing-orders installer from ticket #08 (its own harness in
+# test-standing-orders.sh, invoked at the end).
 #
 # Usage: tests/run.sh
 
@@ -238,6 +239,20 @@ mkdir -p "$tree/not-a-skill"
 run_checker "$tree"
 check "a top-level directory without SKILL.md fails" test "$status" -eq 1
 check "the orphan report names the directory" grep -q 'not-a-skill' <<<"$output"
+
+# --- the standing-orders installer seam (ticket #08) -----------------------------
+
+if installer_out=$(bash "$here/test-standing-orders.sh" 2>&1); then
+	printf '%s\n' "$installer_out"
+	checks=$((checks + 1))
+	printf 'ok   the standing-orders installer tests pass\n'
+else
+	installer_status=$?
+	printf '%s\n' "$installer_out"
+	checks=$((checks + 1))
+	printf 'FAIL the standing-orders installer tests pass (exit %s)\n' "$installer_status"
+	failures=$((failures + 1))
+fi
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
