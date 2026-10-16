@@ -77,4 +77,3 @@ test("calculateTotal sums line items", () => {
 ```
 
 **Bad-for-the-job tests**: a test can go through the public interface and still not be worth keeping. A bad test is one that mostly tests mocks, depends on timing or unrelated global state, needs expensive infrastructure for a small change, or would be deleted immediately after proving its point. Prefer no new test over one of these.
-```

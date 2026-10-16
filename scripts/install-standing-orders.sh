@@ -83,6 +83,9 @@ if grep -qF 'aidev-standing-orders:start' "$target"; then
 	fi
 	die "a truncated orders block (start marker without end) exists at $target — remove the partial block and re-run"
 fi
+if grep -qF 'aidev-standing-orders:end' "$target"; then
+	die "an orphaned orders end marker (end without start) exists at $target — remove the stale block and re-run"
+fi
 
 cat >>"$target" <<'ORDERS'
 

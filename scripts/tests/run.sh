@@ -92,6 +92,15 @@ run_checker "$tree"
 check "two directories declaring the same frontmatter name fail" test "$status" -eq 1
 check "the duplicate-name report names the collision" grep -q 'duplicate skill name in frontmatter' <<<"$output"
 
+tree="$tmp/dup-quoted-frontmatter"
+make_skill alpha
+make_skill beta
+sed 's/^name: beta$/name: "alpha"/' "$tree/beta/SKILL.md" >"$tree/beta/SKILL.md.new"
+mv "$tree/beta/SKILL.md.new" "$tree/beta/SKILL.md"
+run_checker "$tree"
+check "a quoted frontmatter name still collides with a bare duplicate" test "$status" -eq 1
+check "the quoted-duplicate report names the collision" grep -q 'duplicate skill name in frontmatter' <<<"$output"
+
 # --- unresolvable cross-skill references -----------------------------------------
 
 tree="$tmp/cross-slash"
@@ -239,6 +248,15 @@ mkdir -p "$tree/not-a-skill"
 run_checker "$tree"
 check "a top-level directory without SKILL.md fails" test "$status" -eq 1
 check "the orphan report names the directory" grep -q 'not-a-skill' <<<"$output"
+
+# --- unreadable files -------------------------------------------------------------
+
+tree="$tmp/unreadable-file"
+make_skill alpha
+ln -s "$tmp/does-not-exist-anywhere" "$tree/alpha/notes.md"
+run_checker "$tree"
+check "an unreadable file (dangling symlink) is reported, not crashed on" test "$status" -eq 1
+check "the unreadable-file report names the file" grep -q 'unreadable file' <<<"$output"
 
 # --- the standing-orders installer seam (ticket #08) -----------------------------
 

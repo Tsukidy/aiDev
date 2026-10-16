@@ -152,6 +152,16 @@ fi
 check "the truncated file was not appended to" \
 	test "$(grep -c 'aidev-standing-orders' "$tmp/trunc-home/data/captain.md")" -eq 1
 
+s=$(make_sandbox orphan-end "{"home": "$tmp/orphan-home"}" "$tmp/orphan-home")
+printf '# Standing orders\n\n<!-- aidev-standing-orders:end -->\n' >"$tmp/orphan-home/data/captain.md"
+if run_installer "$s"; then
+	check "an orphaned end marker (end without start) is refused" false
+else
+	check "an orphaned end marker (end without start) is refused" test -s "$tmp/stderr.txt"
+fi
+check "the orphaned-marker file was not appended to" \
+	test "$(grep -c 'aidev-standing-orders' "$tmp/orphan-home/data/captain.md")" -eq 1
+
 s=$(make_sandbox preserve "{\"home\": \"$tmp/pres-home\"}" "$tmp/pres-home")
 printf '# Standing orders\n\nNever push to main.\n' >"$tmp/pres-home/data/captain.md"
 run_installer "$s"

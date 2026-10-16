@@ -103,7 +103,16 @@ try {
 
 const textCache = new Map();
 function fileText(file) {
-	if (!textCache.has(file)) textCache.set(file, readFileSync(file, 'utf8'));
+	if (!textCache.has(file)) {
+		try {
+			textCache.set(file, readFileSync(file, 'utf8'));
+		} catch (err) {
+			// Report per the contract (one line per violation) instead of crashing
+			// mid-scan — e.g. a dangling symlink or a permission-denied file.
+			textCache.set(file, '');
+			report(file, 1, `unreadable file (${err.message})`);
+		}
+	}
 	return textCache.get(file);
 }
 
@@ -133,6 +142,19 @@ function lineOf(file, index) {
 
 // Parses the frontmatter shape these skill files actually use. Returns
 // { ok, data, line, error }; `line` points at the offending body line.
+// Strip one pair of surrounding quotes so quoted scalars (`name: "foo"`)
+// key the same as bare ones — duplicate detection and lookups compare the
+// clean value, matching how the YAML-convention frontmatter is meant to read.
+function unquote(value) {
+	if (
+		value.length >= 2 &&
+		((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
+	) {
+		return value.slice(1, -1);
+	}
+	return value;
+}
+
 function parseFrontmatter(file) {
 	const text = fileText(file);
 	const lines = text.split('\n');
@@ -151,7 +173,7 @@ function parseFrontmatter(file) {
 		if (line.trim() === '' || line.trim().startsWith('#')) continue;
 		const kv = line.trim().match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/);
 		if (kv) {
-			if (indentOf(line) === 0) data[kv[1]] = kv[2].trim();
+			if (indentOf(line) === 0) data[kv[1]] = unquote(kv[2].trim());
 			// Indented lines are nested values; only top-level keys are recorded.
 			continue;
 		}
