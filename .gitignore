@@ -1,6 +1,6 @@
 # This repo is a skill source. Pushed content is WHITELISTED: skills/,
-# .claude/skills/, and personal-extensions/ only. Everything else is local
-# to this machine and never pushed.
+# .claude/skills/, personal-extensions/, and scripts/ (the curation
+# verifier). Everything else is local to this machine and never pushed.
 /*
 !/.gitignore
 !/skills
@@ -8,6 +8,7 @@
 /.claude/*
 !/.claude/skills/
 !/personal-extensions
+!/scripts
 
 # Artifacts of installing skills INTO this repo — this repo is a skill source,
 # so `npx skills add` should only ever be run against it, not inside it.
