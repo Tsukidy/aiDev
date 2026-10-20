@@ -326,8 +326,8 @@ ln -s "$tmp/shared-store" "$gitrepo/skills/beta/scripts/node_modules"
 mkdir -p "$gitrepo/docs"
 printf 'local\n' >"$gitrepo/docs/local.md"
 printf 'local\n' >"$gitrepo/CONTEXT.md"
-untracked=$(fixture_git status --porcelain --untracked-files=all | sed 's/^?? //' | sort)
-expected=$(printf '%s\n' .gitignore personal-extensions/ext/kept.txt scripts/kept.txt skills/alpha/scripts/kept.txt)
+untracked=$(fixture_git status --porcelain --untracked-files=all | sed 's/^?? //' | LC_ALL=C sort)
+expected=$(printf '%s\n' .gitignore personal-extensions/ext/kept.txt scripts/kept.txt skills/alpha/scripts/kept.txt | LC_ALL=C sort)
 check "git status lists whitelisted files only, never node_modules" test "$untracked" = "$expected"
 
 # --- the standing-orders installer seam (ticket #08) -----------------------------
