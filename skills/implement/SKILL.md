@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "Execute a crewmate brief or spec'd ticket through the tree's execution skills: tdd at the brief's pre-agreed seams, blast-radius before risky integration, show-me-your-work on unattended runs, fix-ci on red checks, then code-review and commit."
+description: "Execute a crewmate brief or spec'd ticket, feature or bug fix: build features test-first at the brief's agreed seams, fix bugs through tdd, blast-radius before risky integration, show-me-your-work on unattended runs, fix-ci on red checks, then code-review and commit."
 ---
 
 Implement the work described in the brief, ticket, or spec. This is the crewmate-facing execution doctrine: you arrive dispatched with a brief, and you execute it through the skills below.
@@ -11,10 +11,8 @@ Fetch the ticket or issue (per `docs/agents/issue-tracker.md`, when the repo has
 
 ## Execute at the seams
 
-Run /tdd at the brief's pre-agreed seams, in the mode the work calls for:
-
-- **Feature work**: test-first at exactly the seams the brief agreed — no test at an unconfirmed seam.
-- **Bug fix**: the regression workflow — the failing-before test first, then the smallest fix that turns it green.
+- **Feature work**: write the failing test first at the seams agreed in the spec or brief, then only the code needed to pass it. One seam and one test per cycle. If the work needs a seam the brief did not agree, take it back to the dispatcher instead of testing there.
+- **Bug fix**: use /tdd. It fixes the bug against the narrowest executable check that fails before the fix and passes after it, and falls back to the closest practical check when no cheap test exists.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 

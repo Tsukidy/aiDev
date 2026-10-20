@@ -1,5 +1,5 @@
 interface:
   display_name: "Implement"
-  short_description: "Execute a crewmate brief: tdd at agreed seams, then code-review"
+  short_description: "Execute a brief: features test-first at seams, bugs via tdd"
 policy:
   allow_implicit_invocation: true
