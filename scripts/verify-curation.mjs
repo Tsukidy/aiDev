@@ -509,7 +509,7 @@ function upstreamRefPattern(upstream) {
 	if (!m) return null;
 	const repo = `${m[1]}/${m[2]}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	return new RegExp(
-		`(?:github\\.com/${repo}(?:\\.git)?/(?:blob|tree|raw|commits?|blame)|raw\\.githubusercontent\\.com/${repo})/([^/\\s)#?]+)`,
+		`(?:github\\.com/${repo}(?:\\.git)?/(?:blob|tree|raw|commits?|blame)|raw\\.githubusercontent\\.com/${repo})/([^/\\s)#?\`'"]+)((?:/[^/\\s)#?\`'"]+)*)`,
 		'gi',
 	);
 }
@@ -622,11 +622,20 @@ function checkProvenance() {
 		fail('upstream', m.upstream, `upstream "${m.upstream}" is not a github.com repository URL (expected https://github.com/<owner>/<repo>, so NOTICE links can be checked)`);
 		return m;
 	}
-	for (const file of files.filter((f) => /^NOTICE/i.test(basename(f)))) {
-		const body = fileText(file);
-		for (const match of body.matchAll(pattern)) {
-			if (match[1] !== m.sha) {
-				report(file, lineOf(file, match.index), `upstream link "${match[0]}" is not pinned (expected the ${MANIFEST} sha ${m.sha}; actual ${match[1]})`);
+	// Every link into the upstream repository, in any file, pins the manifest's
+	// sha; a link into the upstream skills directory names an upstream skill,
+	// so a renamed skill is linked under its upstream name.
+	for (const file of files) {
+		for (const match of fileText(file).matchAll(pattern)) {
+			const [link, ref, path] = match;
+			if (ref !== m.sha) {
+				report(file, lineOf(file, match.index), `upstream link "${link}" is not pinned (expected the ${MANIFEST} sha ${m.sha}; actual ${ref})`);
+				continue;
+			}
+			const rel = `${path.replace(/^\//, '')}/`;
+			const skill = rel.startsWith(skillsDir) ? rel.slice(skillsDir.length).split('/')[0] : '';
+			if (skill && !upstreamSkills.has(skill)) {
+				report(file, lineOf(file, match.index), `upstream link "${link}" names "${skill}", which is not an upstream skill (expected one of upstreamSkills; link a renamed skill under its upstream name)`);
 			}
 		}
 	}

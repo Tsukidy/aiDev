@@ -496,6 +496,26 @@ for link in \
 	check "an unpinned NOTICE link fails in any GitHub URL shape: $link" test "$status" -eq 1
 done
 
+# Every file's upstream links pin the sha (#26), and a link into the upstream
+# skills directory names a skill upstream has at that sha: a renamed skill
+# lives under its upstream name.
+make_provenance_tree "$tmp/provenance-pinned-skill-link"
+printf '\nUpstream copy: https://github.com/example/vendor/blob/1111111111111111111111111111111111111111/skills/teach/SKILL.md\n' >>"$tree/understand/SKILL.md"
+run_checker "$tree"
+check "a pinned link to a skill under its upstream name passes" test "$status" -eq 0
+
+make_provenance_tree "$tmp/provenance-unpinned-skill-link"
+printf '\nUpstream copy: https://github.com/example/vendor/blob/main/skills/gamma/SKILL.md\n' >>"$tree/gamma/SKILL.md"
+run_checker "$tree"
+check "an unpinned upstream link in a skill file fails, not only in NOTICE" test "$status" -eq 1
+check "the unpinned skill-link report names the file" grep -q 'gamma/SKILL.md:.*blob/main' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-renamed-skill-link"
+printf '\nUpstream copy: https://github.com/example/vendor/blob/1111111111111111111111111111111111111111/skills/understand/SKILL.md\n' >>"$tree/understand/SKILL.md"
+run_checker "$tree"
+check "a pinned link to a renamed skill under its local name fails" test "$status" -eq 1
+check "the renamed-link report names the missing upstream skill" grep -q '"understand"' <<<"$output"
+
 # --- dependency trees (#25) ---------------------------------------------------------
 #
 # poteto-mode's script bootstrap runs `bun install` into its own scripts
