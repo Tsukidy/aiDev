@@ -1,8 +1,10 @@
 # This repo is a skill source. Pushed content is WHITELISTED: skills/,
-# personal-extensions/, and scripts/ (the repo's tooling and its tests).
-# Everything else is local to this machine and never pushed.
+# personal-extensions/, scripts/ (the repo's tooling and its tests), and the
+# root LICENSE (the repository's own MIT license; skills/NOTICE.md maps every
+# license in skills/). Everything else is local to this machine and never pushed.
 /*
 !/.gitignore
+!/LICENSE
 !/skills
 !/personal-extensions
 !/scripts
