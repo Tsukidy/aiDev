@@ -16,7 +16,7 @@ ${rule}
 
 ## Program checklist
 ### Arm the program
-- [ ] Write the standing orders. Read the playbook from the installed plugin. Arm the hourly audit tick.
+- [ ] Write the standing orders. Read the playbook from the installed skills. Arm the hourly audit tick.
 ### Spawn owners
 - [ ] Spawn one owner per PR.
 ### PR mechanics
