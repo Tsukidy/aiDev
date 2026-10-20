@@ -4,7 +4,6 @@
 // source tree (default `skills/`, override as argv[1]). Zero npm dependencies.
 // Exit 0 = the tree is a coherent, installable skill set; exit 1 = one report
 // line per violation (`<file>:<line>: what (expected ...; actual ...)`).
-// `node_modules` directories are skipped at every depth (see SKIPPED_DIRS).
 //
 // The reference grammar below was derived by surveying the syntaxes that
 // actually occur in this repo's fork tree (skills/) and in the upstream tree
