@@ -346,6 +346,16 @@ function isKnownSkill(name) {
 	return dirNamesLower.has(name.toLowerCase()) || skillNamesLower.has(name.toLowerCase());
 }
 
+// A `namespace:name` reference resolves when `name` is in the tree (a skill,
+// or for subagent_type a carried agent). pstack: is banned outright below,
+// so it is not reported twice.
+function checkNamespaced(file, index, namespace, name, isKnown = isKnownSkill) {
+	if (namespace === 'pstack') return;
+	if (!isKnown(name)) {
+		report(file, lineOf(file, index), `namespaced reference "${namespace}:${name}" does not resolve (expected "${name}" in the skills tree; a skills-CLI install has no "${namespace}" namespace to resolve it in)`);
+	}
+}
+
 // --- pass 2: reference scanning ---------------------------------------------------------
 
 for (const file of mdFiles) {
@@ -355,12 +365,24 @@ for (const file of mdFiles) {
 	const fileDir = dirname(file);
 	const skillRoot = join(root, skillRootOf(file));
 
-	// (a) slash-command mentions inside code spans
+	// (a) slash-command mentions inside code spans; a namespaced one is a
+	// namespaced skill reference (g)
 	for (const span of spans) {
-		const m = span.content.match(/^\/([a-z0-9][a-z0-9-]*)$/);
+		const m = span.content.match(/^\/(?:([a-z0-9][a-z0-9-]*):)?([a-z0-9][a-z0-9-]*)$/);
 		if (!m) continue;
-		if (!BUILTIN_SLASH.has(m[1]) && !isKnownSkill(m[1])) {
-			report(file, lineOf(file, span.index), `slash mention "/${m[1]}" does not resolve (expected an existing skill or built-in command; no skill named "${m[1]}" exists)`);
+		if (m[1]) {
+			checkNamespaced(file, span.index, m[1], m[2]);
+		} else if (!BUILTIN_SLASH.has(m[2]) && !isKnownSkill(m[2])) {
+			report(file, lineOf(file, span.index), `slash mention "/${m[2]}" does not resolve (expected an existing skill or built-in command; no skill named "${m[2]}" exists)`);
+		}
+	}
+
+	// (g) namespaced skill references in their skill-naming forms: bold
+	// (**ns:name**), or followed by the word "skill" (`ns:name` skill).
+	{
+		const re = /\*\*([a-z0-9][a-z0-9-]*):([a-z0-9][a-z0-9-]*)\*\*|(?<![\w/.:-])`?([a-z0-9][a-z0-9-]*):([a-z0-9][a-z0-9-]*)`?\s+skill\b/g;
+		for (const m of blanked.matchAll(re)) {
+			checkNamespaced(file, m.index, m[1] ?? m[3], m[2] ?? m[4]);
 		}
 	}
 
@@ -427,8 +449,12 @@ for (const file of mdFiles) {
 		while ((m = re.exec(text)) !== null) {
 			const name = m[1] ?? m[2] ?? m[3];
 			const index = baseIndex + m.index + m[0].indexOf(name);
-			if (name.includes(':')) continue; // namespaced values are covered by the pstack: ban below
 			if (PLACEHOLDER.test(name)) continue;
+			const namespaced = name.match(/^([^:]+):(.+)$/);
+			if (namespaced) {
+				checkNamespaced(file, index, namespaced[1], namespaced[2], (agent) => knownAgentNames.has(agent));
+				continue;
+			}
 			if (BUILTIN_SUBAGENT.has(name)) continue;
 			if (!knownAgentNames.has(name)) {
 				report(file, lineOf(file, index), `agent reference "subagent_type: ${name}" does not resolve (expected an agents/*.md definition declaring name: ${name}; known agents: ${knownAgentNames.size ? [...knownAgentNames].join(', ') : 'none'})`);

@@ -100,7 +100,6 @@ The [driver policy](../SKILL.md#non-negotiables) selects the app driver. For ski
 |---------------------------------|-------------------|
 | `run` (drive a CLI/TUI to see a change work) | Run the app yourself via `bash` and observe the real output. |
 | Project UI driver | Drive the UI with whatever automation you have (the app's `browser` canvas, a browser skill), or hand the user a concrete manual check. Do not claim done without observing the artifact. |
-| `plugin-dev:skill-development` (Claude's SKILL.md authoring guidance) | Follow the Agent Skills conventions: a `SKILL.md` with `name` + `description` frontmatter, progressive disclosure into `references/`, and poteto-mode's [authoring-a-skill playbook](../playbooks/authoring-a-skill.md). |
 | `loop` (recurring/self-paced re-invocation, used by `babysit`) | Copilot has no `loop` skill. In the app use `save_session_automation`; on the CLI re-run the step yourself on a cadence. |
 
 ## Per-skill notes

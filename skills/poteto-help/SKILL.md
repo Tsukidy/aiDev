@@ -94,7 +94,7 @@ Close calls:
 Not in pstack itself:
 
 - The Cursor driver skills have no port. The driver policy in poteto-mode's Non-negotiables names the Claude Code equivalents, the `run` skill and a project `verify` skill.
-- `loop` is a Claude Code bundled skill, and the **plugin-dev:skill-development** skill is Claude Code's skill-authoring guidance.
+- `loop` is a Claude Code bundled skill, and skill-authoring guidance is the **writing-for-agents** skill.
 - pstack has no orchestrate skill. Orchestrate is a `/poteto-mode` playbook. If the slash menu shows an orchestrate command, another plugin provides it.
 
 ## Playbooks and principles

@@ -252,6 +252,39 @@ EOF
 run_checker "$tree"
 check "a <plugin>-rooted path inside a fenced command fails too" test "$status" -eq 1
 
+# --- namespaced skill references (#26) ------------------------------------------
+#
+# A plugin-namespaced skill (`namespace:skill`) that is not in the tree never
+# resolves after a skills-CLI install. Checked in the forms that name a skill
+# unambiguously; labels such as `wayfinder:map` or `file:line` are not.
+
+tree="$tmp/namespace-ref"
+make_skill alpha
+cat >>"$tree/alpha/SKILL.md" <<'EOF'
+
+Use the **plugin-dev:skill-development** skill to write it.
+Then the `tools:formatter` skill, and `/tools:linter` after.
+Dispatch with `subagent_type: "tools:helper-agent"`.
+Labels like `wayfinder:map`, `lint:boundaries` and `file:line` are not skills.
+EOF
+run_checker "$tree"
+check "unresolvable namespace:skill references fail" test "$status" -eq 1
+check "the namespace report names a bold reference" grep -q 'plugin-dev:skill-development' <<<"$output"
+check "the namespace report names a backticked reference followed by 'skill'" grep -q 'tools:formatter' <<<"$output"
+check "the namespace report names a namespaced slash mention" grep -q 'tools:linter' <<<"$output"
+check "the namespace report names a namespaced subagent_type" grep -q 'tools:helper-agent' <<<"$output"
+check "labels that are not skill references are not reported" test "$(grep -c 'wayfinder:map\|lint:boundaries\|file:line' <<<"$output")" -eq 0
+
+tree="$tmp/namespace-resolved"
+make_skill alpha
+make_skill beta
+cat >>"$tree/alpha/SKILL.md" <<'EOF'
+
+Use the **local:beta** skill, then `/local:beta`.
+EOF
+run_checker "$tree"
+check "a namespace:skill reference whose skill is in the tree passes" test "$status" -eq 0
+
 # --- frontmatter -------------------------------------------------------------------------
 
 tree="$tmp/frontmatter-broken"
