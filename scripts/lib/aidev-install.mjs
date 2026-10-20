@@ -1,7 +1,8 @@
 // Shared core of install.mjs and uninstall.mjs (ticket #21, spec #11 D6–D9):
-// path resolution under $HOME, the install manifest, the file primitives
-// that record what they touch, marked blocks, the settings hook entry, and
-// running external CLIs. Zero npm dependencies.
+// paths under $HOME, file primitives that record what they touch in the
+// manifest (lib/manifest.mjs), marked blocks, external commands, and the
+// repo's skill tree. Runtime-specific code lives in the targets (lib/targets.mjs).
+// Zero npm dependencies.
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -24,22 +25,22 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { add, backupItem, backupOf, drop, items, ownedFile, ownedFileItem, readManifest, serialize, sharedFile, sharedFileItem } from './manifest.mjs';
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SKILLS_SRC = join(REPO, 'skills');
-export const SCHEMA_VERSION = 1;
-// The skills CLI release whose source the flags below were read from
+// The skills CLI release whose source the flags were read from
 // (vercel-labs/skills a80e4c9 = npm skills@1.7.4). Pinned so a CLI release
 // cannot change what install and uninstall do.
 export const SKILLS_CLI = 'skills@1.7.4';
-export const SKILLS_CLI_MIN_NODE = [22, 20];
+const SKILLS_CLI_MIN_NODE = [22, 20];
 export const ONBOARDING_PLUGIN_DIR = join(REPO, 'personal-extensions', 'paseo-firstmate-beads-onboarding');
 // What bd init --quiet --stealth creates in a non-git home
 // (docs/research/beads-cli-memory-surface.md A2): its store, a gate lock, and
 // a git repository.
 export const BEADS_CREATED_NAMES = ['.beads', '.beads.gate.lock', '.git'];
 
-// --- output -------------------------------------------------------------------------
+// --- output and flags ---------------------------------------------------------------
 
 export function makeReport(tool) {
 	const r = {
@@ -89,13 +90,12 @@ export function resolveContext(env) {
 		console.error('aidev: HOME must name an existing absolute directory');
 		process.exit(1);
 	}
-	const claudeDir = env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude');
 	const dataDir = join(xdg(env, 'XDG_DATA_HOME', home, '.local/share'), 'aidev');
 	const stateDir = join(xdg(env, 'XDG_STATE_HOME', home, '.local/state'), 'aidev');
 	return {
 		env,
 		home,
-		claudeDir,
+		claudeDir: env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude'),
 		dataDir,
 		stateDir,
 		manifestPath: join(stateDir, 'install-manifest.json'),
@@ -103,11 +103,14 @@ export function resolveContext(env) {
 		excludeFile: join(xdg(env, 'XDG_CONFIG_HOME', home, '.config'), 'aidev', 'install-exclude'),
 		licensesDir: join(dataDir, 'licenses'),
 		paseoHome: env.PASEO_HOME || join(home, '.paseo'),
-		// The skills CLI keeps its global lock here (skill-lock.ts getSkillLockPath).
+		// Where the skills CLI keeps its global lock (skill-lock.ts
+		// getSkillLockPath). Deliberately not xdg(): the CLI takes any
+		// non-empty XDG_STATE_HOME as is, and this must name the same file.
+		// A relative value then fails the inside-HOME precondition.
 		skillsLockPath: env.XDG_STATE_HOME
 			? join(env.XDG_STATE_HOME, 'skills', '.skill-lock.json')
 			: join(home, '.agents', '.skill-lock.json'),
-		// ...and its canonical copies here (installer.ts getCanonicalSkillsDir).
+		// ...and its canonical copies (installer.ts getCanonicalSkillsDir).
 		canonicalSkillsDir: join(home, '.agents', 'skills'),
 	};
 }
@@ -133,6 +136,7 @@ export function realResolve(p) {
 }
 
 export function insideHome(ctx, p) {
+	if (!isAbsolute(p)) return false;
 	const home = realResolve(ctx.home);
 	const r = realResolve(p);
 	return r === home || r.startsWith(home + sep);
@@ -193,11 +197,9 @@ export function lexists(p) {
 	}
 }
 
-// --- hashing and files ------------------------------------------------------------------
+// --- files ------------------------------------------------------------------------------
 
-export function sha256(buf) {
-	return createHash('sha256').update(buf).digest('hex');
-}
+export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 export function fileSha(p) {
 	try {
@@ -215,34 +217,33 @@ export function readText(p) {
 	}
 }
 
+// Replace a file atomically. A symlink is written through (a dotfiles link
+// stays a link), and an existing file keeps its mode (settings.json is 0600)
+// unless a mode is given.
 export function writeAtomic(p, content, mode) {
-	mkdirSync(dirname(p), { recursive: true });
-	const tmp = `${p}.aidev-tmp`;
-	writeFileSync(tmp, content);
-	if (mode !== undefined) chmodSync(tmp, mode);
-	renameSync(tmp, p);
-}
-
-// --- the manifest --------------------------------------------------------------------------
-
-export function loadManifest(ctx) {
-	const text = readText(ctx.manifestPath);
-	if (text === null) return null;
-	const m = JSON.parse(text);
-	if (m.schemaVersion !== SCHEMA_VERSION || !Array.isArray(m.items)) {
-		throw new Error(`unsupported manifest at ${ctx.manifestPath} (schemaVersion ${m.schemaVersion})`);
+	let dest = p;
+	try {
+		if (lstatSync(p).isSymbolicLink()) dest = realpathSync(p);
+	} catch {}
+	let keep = mode;
+	if (keep === undefined) {
+		try {
+			keep = statSync(dest).mode & 0o7777;
+		} catch {}
 	}
-	return m;
+	mkdirSync(dirname(dest), { recursive: true });
+	const tmp = `${dest}.aidev-tmp`;
+	writeFileSync(tmp, content);
+	if (keep !== undefined) chmodSync(tmp, keep);
+	renameSync(tmp, dest);
 }
 
-export function serializeManifest(m) {
-	return JSON.stringify(m, null, 2) + '\n';
-}
+export const loadManifest = (ctx) => readManifest(ctx.manifestPath);
 
 // Written only when it changed, so an install that changes nothing leaves the
 // manifest byte-identical.
 export function saveManifest(ctx, m) {
-	const text = serializeManifest(m);
+	const text = serialize(m);
 	if (readText(ctx.manifestPath) !== text) writeAtomic(ctx.manifestPath, text);
 }
 
@@ -251,28 +252,27 @@ export function repoCommit() {
 	return r.status === 0 ? r.stdout.trim() : 'unknown';
 }
 
-export const find = (m, pred) => m.items.find(pred);
-export const fileRecord = (m, path) => find(m, (i) => (i.kind === 'file' || i.kind === 'agent') && i.path === path);
-export const backupRecord = (m, path) => find(m, (i) => i.kind === 'backup' && i.of === path);
-
 // Copy a pre-existing file aside the first time the install modifies it; a
-// later run must not back up our own changes.
+// later run must not back up our own changes, and must never overwrite a
+// backup an earlier uninstall kept.
 export function backupOnce(ctx, m, path) {
-	if (!existsSync(path) || backupRecord(m, path)) return;
-	const n = m.items.filter((i) => i.kind === 'backup').length + 1;
-	const dest = join(ctx.backupsDir, `${String(n).padStart(3, '0')}-${basename(path)}`);
+	if (!existsSync(path) || backupOf(m, path)) return;
 	mkdirSync(ctx.backupsDir, { recursive: true });
+	let n = items(m, 'backup').length + 1;
+	let dest;
+	do dest = join(ctx.backupsDir, `${String(n++).padStart(3, '0')}-${basename(path)}`);
+	while (existsSync(dest));
 	copyFileSync(path, dest);
-	m.items.push({ kind: 'backup', of: path, path: dest, sha256: fileSha(dest) });
+	add(m, backupItem(path, dest, fileSha(dest)));
 }
 
-// Place a file whose whole content is ours (an agent, the hook, the sheet, a
-// license copy). A file recorded as ours is refreshed only while it still
+// Place a file whose whole content is ours (an agent, a hook file, the sheet,
+// a license copy). A file recorded as ours is refreshed only while it still
 // holds what we wrote; a pre-existing file of the same name is backed up
-// first and restored at uninstall.
+// first and restored at uninstall. Returns whether the file changed.
 export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }) {
 	const want = sha256(content);
-	const rec = fileRecord(m, path);
+	const rec = ownedFile(m, path);
 	const cur = fileSha(path);
 	if (rec) {
 		if (cur !== null && cur !== rec.sha256) {
@@ -280,7 +280,6 @@ export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, cont
 			return false;
 		}
 		if (cur !== want) writeAtomic(path, content, mode);
-		else if (mode !== undefined && (statSync(path).mode & 0o777) !== mode) chmodSync(path, mode);
 		rec.sha256 = want;
 		return cur !== want;
 	}
@@ -289,40 +288,77 @@ export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, cont
 		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
 	}
 	writeAtomic(path, content, mode);
-	const item = { kind, path, sha256: want, existedBefore: cur !== null };
-	if (name) item.name = name;
-	m.items.push(item);
+	add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: cur !== null }));
 	return true;
 }
 
-// Record (or refresh) the after-install hash of a file we share with others
-// (settings.json, CLAUDE.md, captain.md): uninstall restores the backup when
-// the file still holds exactly this, and strips only our parts otherwise.
-export function noteSharedFile(m, path, existedBefore) {
-	let rec = fileRecord(m, path);
-	if (!rec) {
-		rec = { kind: 'file', path, shared: true, existedBefore };
-		m.items.push(rec);
+// Take back a file placed by placeOwnedFile: delete it while it still holds
+// what we wrote, then put back the operator's original if we replaced one.
+// A file edited since install is kept. Returns a "kept" note, or null.
+export function reverseOwnedFile(m, item) {
+	const cur = fileSha(item.path);
+	const b = backupOf(m, item.path);
+	drop(m, item);
+	if (cur !== null && cur !== item.sha256) {
+		if (b) drop(m, b); // left on disk; the note says where
+		return `${item.path} (modified since install${b ? `; the pre-install original is at ${b.path}` : ''})`;
 	}
+	if (cur !== null) rmSync(item.path, { force: true });
+	if (b) {
+		if (existsSync(b.path)) {
+			writeAtomic(item.path, readFileSync(b.path));
+			rmSync(b.path, { force: true });
+		}
+		drop(m, b);
+	}
+	return null;
+}
+
+// Record (or refresh) a file we add parts to (settings.json, CLAUDE.md,
+// captain.md): uninstall strips only our parts from it.
+export function noteSharedFile(m, path, existedBefore) {
+	const rec = sharedFile(m, path) ?? add(m, sharedFileItem(path, existedBefore));
 	rec.sha256 = fileSha(path);
 }
 
-// --- marked blocks ------------------------------------------------------------------------
+// --- marked blocks -----------------------------------------------------------------------
 
 export const markers = (id) => [`<!-- ${id}:start -->`, `<!-- ${id}:end -->`];
 
-// The [start, end) character range of a marked block, from the start marker
-// line through the end marker line and its newline; null when absent.
-// Throws on a truncated or orphaned block.
+// Index of `line` where it stands as a whole line, or -1.
+function lineIndex(text, line) {
+	for (let i = text.indexOf(line); i >= 0; i = text.indexOf(line, i + 1)) {
+		const end = i + line.length;
+		if ((i === 0 || text[i - 1] === '\n') && (end === text.length || text[end] === '\n')) return i;
+	}
+	return -1;
+}
+
+// The [start, end) range of a marked block, from its start marker line
+// through its end marker line and newline; null when absent. Markers count
+// only as whole lines. Throws on a truncated or orphaned block.
 export function blockRange(text, id) {
 	const [s, e] = markers(id);
-	const si = text.indexOf(s);
-	const ei = text.indexOf(e);
+	const si = lineIndex(text, s);
+	const ei = lineIndex(text, e);
 	if (si < 0 && ei < 0) return null;
-	if (si < 0 || ei < si) throw new Error(`a damaged ${id} block (markers out of order or missing)`);
+	if (si < 0 || ei < si) throw new Error(`a damaged ${id} block (markers missing or out of order)`);
 	let end = ei + e.length;
 	if (text[end] === '\n') end++;
 	return [si, end];
+}
+
+// Insert a marked block at the end of `text` (null = no file yet), or replace
+// the body of the one already there. Returns the new text and the separator
+// put in front of an appended block (uninstall removes it with the block).
+export function upsertBlock(text, id, body) {
+	const [s, e] = markers(id);
+	const block = `${s}\n${body}${e}\n`;
+	const range = text === null ? null : blockRange(text, id);
+	if (range) return { text: text.slice(0, range[0]) + block + text.slice(range[1]), before: '' };
+	if (!text) return { text: block, before: '' };
+	const before = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
+	return { text: text + before + block, before };
 }
 
 // Remove a marked block plus the text the install put in front of it
@@ -335,7 +371,7 @@ export function stripBlock(text, id, before) {
 	return text.slice(0, start) + text.slice(end);
 }
 
-// --- the settings hook entry ------------------------------------------------------------
+// --- JSON files -------------------------------------------------------------------------
 
 export function readJsonObject(path) {
 	const text = readText(path);
@@ -345,30 +381,12 @@ export function readJsonObject(path) {
 	return v;
 }
 
-export const hookHasCommand = (group, marker) =>
-	Array.isArray(group?.hooks) && group.hooks.some((h) => typeof h?.command === 'string' && h.command.includes(marker));
-
-// Drop every hook whose command names our marker, then any group left empty,
-// then the event and the hooks object if they end up empty.
-export function removeHookEntry(settings, event, marker) {
-	const groups = settings.hooks?.[event];
-	if (!Array.isArray(groups)) return settings;
-	const kept = [];
-	for (const g of groups) {
-		if (!hookHasCommand(g, marker)) {
-			kept.push(g);
-			continue;
-		}
-		const hooks = g.hooks.filter((h) => !(typeof h?.command === 'string' && h.command.includes(marker)));
-		if (hooks.length) kept.push({ ...g, hooks });
-	}
-	if (kept.length) settings.hooks[event] = kept;
-	else delete settings.hooks[event];
-	if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
-	return settings;
+// Serialize like `like` (the file's previous text): same indentation, same
+// final newline. Two spaces and a newline for a new file.
+export function jsonLike(v, like) {
+	const indent = like?.match(/\n([ \t]+)\S/)?.[1] ?? '  ';
+	return JSON.stringify(v, null, indent) + (like == null || like.endsWith('\n') ? '\n' : '');
 }
-
-export const jsonText = (v) => JSON.stringify(v, null, 2) + '\n';
 
 // --- external commands ----------------------------------------------------------------------
 
@@ -393,9 +411,7 @@ export function paseoPluginIds(ctx) {
 	}
 }
 
-export function skillsCli(ctx, args) {
-	return run(ctx, 'npx', ['--yes', SKILLS_CLI, ...args], { env: { DISABLE_TELEMETRY: '1' } });
-}
+export const skillsCli = (ctx, args) => run(ctx, 'npx', ['--yes', SKILLS_CLI, ...args], { env: { DISABLE_TELEMETRY: '1' } });
 
 export function readSkillsLock(ctx) {
 	try {
@@ -423,30 +439,22 @@ export function missingDirs(ctx, paths) {
 
 export function removeEmptyDir(p) {
 	try {
-		if (readdirSync(p).length === 0) {
-			rmdirSync(p);
-			return true;
-		}
+		if (readdirSync(p).length === 0) rmdirSync(p);
 	} catch {}
-	return false;
 }
 
 // --- the repo's skill tree ---------------------------------------------------------------------
 
-export function repoSkills() {
-	return readdirSync(SKILLS_SRC)
-		.filter((d) => existsSync(join(SKILLS_SRC, d, 'SKILL.md')))
-		.sort();
-}
+export const repoSkills = () => readdirSync(SKILLS_SRC).filter((d) => existsSync(join(SKILLS_SRC, d, 'SKILL.md'))).sort();
 
-// Every <skill>/agents/<name>.md in the tree: the four carried agent
-// definitions and the vendored effort agents.
+// Every <skill>/agents/<name>.md in the tree, with the skill that carries it:
+// the four carried agent definitions and the vendored effort agents.
 export function repoAgents() {
 	const out = [];
-	for (const s of repoSkills()) {
-		const dir = join(SKILLS_SRC, s, 'agents');
+	for (const skill of repoSkills()) {
+		const dir = join(SKILLS_SRC, skill, 'agents');
 		if (!isDir(dir)) continue;
-		for (const f of readdirSync(dir).sort()) if (f.endsWith('.md')) out.push({ name: f.slice(0, -3), src: join(dir, f) });
+		for (const f of readdirSync(dir).sort()) if (f.endsWith('.md')) out.push({ name: f.slice(0, -3), skill, src: join(dir, f) });
 	}
 	return out;
 }
@@ -455,7 +463,9 @@ export function repoAgents() {
 // that lands inside another skill directory. From a script (anything but
 // Markdown) it is a hard dependency: the code fails without the other skill
 // (poteto-mode's worktree-audit.mjs imports reflect's finder, #26). From
-// Markdown it is a link that would dangle.
+// Markdown it is a link that would dangle. Broader than the curation gate's
+// reference grammar on purpose: the gate checks Markdown syntax, this checks
+// whatever a script can import.
 export function skillDependencies() {
 	const skills = new Set(repoSkills());
 	const deps = [];
@@ -464,21 +474,13 @@ export function skillDependencies() {
 			if (e.name === 'node_modules') continue;
 			const p = join(dir, e.name);
 			if (e.isDirectory()) walk(p, owner);
-			else if (e.isFile()) {
-				let text;
-				try {
-					text = readFileSync(p, 'utf8');
-				} catch {
-					continue;
-				}
-				for (const match of text.matchAll(/(?:\.\.\/)+[A-Za-z0-9._-]+/g)) {
-					const rel = relative(SKILLS_SRC, resolve(dirname(p), match[0]));
-					if (rel.startsWith('..') || isAbsolute(rel)) continue;
-					const target = rel.split(sep)[0];
-					if (target !== owner && skills.has(target)) {
-						deps.push({ from: owner, to: target, file: relative(SKILLS_SRC, p), hard: !p.endsWith('.md') });
-					}
-				}
+			if (!e.isFile()) continue;
+			const text = readText(p) ?? '';
+			for (const match of text.matchAll(/(?:\.\.\/)+[A-Za-z0-9._-]+/g)) {
+				const rel = relative(SKILLS_SRC, resolve(dirname(p), match[0]));
+				const target = rel.split(sep)[0];
+				if (rel.startsWith('..') || target === owner || !skills.has(target)) continue;
+				deps.push({ from: owner, to: target, file: relative(SKILLS_SRC, p), hard: !p.endsWith('.md') });
 			}
 		}
 	};
@@ -494,15 +496,3 @@ export function readExcludeList(ctx) {
 		.map((l) => l.replace(/#.*/, '').trim())
 		.filter(Boolean);
 }
-
-// setup-pstack's default sheet: the one ```markdown fence in its SKILL.md
-// (step 6, "Write the override sheet"), so the installer writes exactly the
-// shape the skill documents.
-export function defaultSheet() {
-	const text = readFileSync(join(SKILLS_SRC, 'setup-pstack', 'SKILL.md'), 'utf8');
-	const m = text.match(/\n```markdown\n([\s\S]*?)\n```\n/);
-	if (!m) throw new Error('setup-pstack/SKILL.md has no ```markdown default sheet');
-	return m[1] + '\n';
-}
-
-export { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, join, dirname, basename };

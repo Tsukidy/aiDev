@@ -210,6 +210,16 @@ cp "$tmp/up-home/data/captain.md" "$tmp/up-after.md"
 run_installer "$s"
 check "a re-run after the upgrade is byte-identical" cmp -s "$tmp/up-after.md" "$tmp/up-home/data/captain.md"
 
+# Prose that names the markers without the comment wrapper is not a block.
+s=$(make_sandbox prose "{\"home\": \"$tmp/prose-home\"}" "$tmp/prose-home")
+printf '# Standing orders\n\nNotes: aidev-standing-orders:start and aidev-standing-orders:end wrap the block.\n' >"$tmp/prose-home/data/captain.md"
+cp "$tmp/prose-home/data/captain.md" "$tmp/prose-before.md"
+run_installer "$s"
+check "marker names in prose do not count as a block: the block is appended" \
+	test "$(grep -c '^<!-- aidev-standing-orders:start -->$' "$tmp/prose-home/data/captain.md")" -eq 1
+check "the prose stays byte-identical ahead of the appended block" \
+	bash -c 'head -c "$(wc -c <"$2")" "$1" | cmp -s - "$2"' _ "$tmp/prose-home/data/captain.md" "$tmp/prose-before.md"
+
 # --- content: the seven elements ----------------------------------------------
 
 s=$(make_sandbox content "{\"home\": \"$tmp/content-home\"}" "$tmp/content-home")

@@ -1,184 +1,253 @@
-// The Claude Code runtime target (spec #11 D5: the only implemented target).
-// It owns install steps 2–7 of ticket #21: the curated skills through the
-// skills CLI, the carried and effort agents, the SessionStart routing hook and
-// its settings entry, the default model sheet, and the CLAUDE.md include.
-// A pi or omp target would be a sibling module with the same three methods;
-// uninstall needs none of them, because it is driven by the manifest records
-// each target leaves behind.
+// The Claude Code runtime target (spec #11 D5: the only one implemented; the
+// contract is in targets.mjs). It owns install steps 2–7 of ticket #21: the
+// curated skills through the skills CLI, the carried and effort agents, the
+// SessionStart routing hook and its settings entry, the default model sheet,
+// and the CLAUDE.md include.
 
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import {
 	REPO,
 	SKILLS_SRC,
 	backupOnce,
-	defaultSheet,
-	existsSync,
-	fileRecord,
-	fileSha,
-	find,
-	hookHasCommand,
-	join,
-	jsonText,
-	lexists,
-	markers,
 	blockRange,
+	jsonLike,
+	lexists,
 	noteSharedFile,
 	placeOwnedFile,
-	readFileSync,
 	readJsonObject,
 	readSkillsLock,
 	readText,
 	repoAgents,
+	reverseOwnedFile,
 	skillsCli,
+	upsertBlock,
 	writeAtomic,
 } from './aidev-install.mjs';
+import {
+	add,
+	drop,
+	ensure,
+	first,
+	hookEntryItem,
+	items,
+	markedBlockItem,
+	ownedFile,
+	sharedFile,
+	skillItem,
+	skillsLockItem,
+} from './manifest.mjs';
 
-const AGENT = 'claude-code';
+const NAME = 'claude-code';
 const SHEET_BLOCK = 'aidev-pstack-sheet';
 const HOOK_MATCHER = 'startup|resume|clear|compact';
+const ROUTER = 'poteto-mode'; // the skill the routing hook's mandate invokes
+
+// --- the settings.json hook entry (Claude Code's format) ---------------------------------
+
+const isOurs = (hook, marker) => typeof hook?.command === 'string' && hook.command.includes(marker);
+const groupHas = (group, marker) => Array.isArray(group?.hooks) && group.hooks.some((h) => isOurs(h, marker));
+
+// Drop every hook whose command names our marker, then any group left empty,
+// then the event and the hooks object if they end up empty.
+function stripHookEntry(settings, { event, marker }) {
+	const groups = settings.hooks?.[event];
+	if (!Array.isArray(groups)) return settings;
+	const kept = [];
+	for (const g of groups) {
+		if (!groupHas(g, marker)) kept.push(g);
+		else {
+			const hooks = g.hooks.filter((h) => !isOurs(h, marker));
+			if (hooks.length) kept.push({ ...g, hooks });
+		}
+	}
+	if (kept.length) settings.hooks[event] = kept;
+	else delete settings.hooks[event];
+	if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+	return settings;
+}
+
+// POSIX single-quote a path for the hook command (Claude Code runs it in a shell).
+const shQuote = (s) => `'${s.replaceAll("'", `'\\''`)}'`;
+
+// setup-pstack's default sheet: the one ```markdown fence in its SKILL.md
+// (step 6, "Write the override sheet"), so the installer writes exactly the
+// shape the skill documents.
+function defaultSheet() {
+	const text = readFileSync(join(SKILLS_SRC, 'setup-pstack', 'SKILL.md'), 'utf8');
+	const m = text.match(/\n```markdown\n([\s\S]*?)\n```\n/);
+	if (!m) throw new Error('setup-pstack/SKILL.md has no ```markdown default sheet');
+	return m[1] + '\n';
+}
 
 export function claudeCodeTarget(ctx) {
 	const d = ctx.claudeDir;
 	const hookDir = join(ctx.dataDir, 'claude-code', 'hooks');
-	const t = {
-		name: AGENT,
-		skillsDir: join(d, 'skills'),
-		agentsDir: join(d, 'agents'),
-		settings: join(d, 'settings.json'),
-		claudeMd: join(d, 'CLAUDE.md'),
-		sheet: join(d, 'pstack-models.md'),
-		hookScript: join(hookDir, 'session-start.sh'),
-		hookFiles: [
-			{ src: join(REPO, 'scripts', 'claude-code', 'session-start.sh'), dest: join(hookDir, 'session-start.sh'), mode: 0o755 },
-			{ src: join(SKILLS_SRC, 'setup-pstack', 'hooks', 'session-start-context.md'), dest: join(hookDir, 'session-start-context.md'), mode: 0o644 },
-			{ src: join(SKILLS_SRC, 'setup-pstack', 'scripts', 'read-sheet.sh'), dest: join(hookDir, 'read-sheet.sh'), mode: 0o755 },
-		],
-	};
-	t.hookCommand = JSON.stringify(t.hookScript);
-	t.agents = repoAgents().map((a) => ({ ...a, dest: join(t.agentsDir, `${a.name}.md`) }));
-
-	// Every path this target writes directly (the skills CLI writes the rest).
-	t.paths = () => [t.skillsDir, t.settings, t.claudeMd, t.sheet, ...t.agents.map((a) => a.dest), ...t.hookFiles.map((f) => f.dest)];
-
-	t.preconditions = (report) => {
-		try {
-			readJsonObject(t.settings);
-		} catch (e) {
-			report.error(`${t.settings} does not parse as a JSON object (${e.message}) — fix it and re-run`);
-		}
-		const md = readText(t.claudeMd);
-		if (md !== null) {
-			try {
-				blockRange(md, SHEET_BLOCK);
-			} catch (e) {
-				report.error(`${t.claudeMd}: ${e.message} — remove the partial block and re-run`);
-			}
-		}
-	};
-
-	// A skill name already present for Claude Code, in the skills CLI's lock,
-	// or in its canonical directory, and not installed by us, belongs to
-	// someone else: installing over it would make the CLI's remove delete the
-	// operator's copy and lock entry at uninstall. Those are skipped.
-	t.planSkills = (m, desired) => {
-		const ours = new Set(m.items.filter((i) => i.kind === 'skill').map((i) => i.name));
-		const lock = readSkillsLock(ctx)?.skills ?? {};
-		const collisions = desired.filter(
-			(n) => !ours.has(n) && (lexists(join(t.skillsDir, n)) || n in lock || lexists(join(ctx.canonicalSkillsDir, n))),
-		);
-		return {
-			add: desired.filter((n) => !collisions.includes(n)),
-			remove: [...ours].filter((n) => !desired.includes(n)).sort(),
-			collisions,
-		};
-	};
-
-	t.describe = (plan) => [
-		...(plan.remove.length ? [`skills remove (${t.name}, user level): ${plan.remove.join(' ')}`] : []),
-		`skills add (${t.name}, user level, copy) from ${SKILLS_SRC} → ${t.skillsDir}/<name>: ${plan.add.length} skills`,
-		...t.agents.map((a) => `agent ${a.dest}`),
-		...t.hookFiles.map((f) => `hook file ${f.dest}`),
-		`SessionStart hook entry (${HOOK_MATCHER}) in ${t.settings}`,
-		`model sheet ${t.sheet} (only if absent)`,
-		`marked block ${SHEET_BLOCK} in ${t.claudeMd} including @${t.sheet}`,
+	const skillsDir = join(d, 'skills');
+	const agentsDir = join(d, 'agents');
+	const settings = join(d, 'settings.json');
+	const claudeMd = join(d, 'CLAUDE.md');
+	const sheet = join(d, 'pstack-models.md');
+	const hookScript = join(hookDir, 'session-start.sh');
+	const hookFiles = [
+		{ src: join(REPO, 'scripts', 'claude-code', 'session-start.sh'), dest: hookScript, mode: 0o755 },
+		{ src: join(SKILLS_SRC, 'setup-pstack', 'hooks', 'session-start-context.md'), dest: join(hookDir, 'session-start-context.md'), mode: 0o644 },
+		{ src: join(SKILLS_SRC, 'setup-pstack', 'scripts', 'read-sheet.sh'), dest: join(hookDir, 'read-sheet.sh'), mode: 0o755 },
 	];
+	const agents = repoAgents().map((a) => ({ ...a, dest: join(agentsDir, `${a.name}.md`) }));
 
-	t.install = (m, plan, report) => {
-		// 2. Skills, through the skills CLI: user level (-g), Claude Code only,
-		// copies (with one agent the CLI copies anyway; --copy makes it explicit).
-		if (!find(m, (i) => i.kind === 'skills-lock')) {
-			m.items.push({ kind: 'skills-lock', path: ctx.skillsLockPath, existedBefore: existsSync(ctx.skillsLockPath) });
+	// --- step 5: the routing hook, added or (when its skill is excluded) taken out --------
+
+	function installHook(m, report) {
+		for (const f of hookFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src), mode: f.mode });
+		const text = readText(settings);
+		const json = readJsonObject(settings);
+		if (first(m, 'hook-entry', (i) => i.path === settings)) return;
+		if ((json.hooks?.SessionStart ?? []).some((g) => groupHas(g, hookScript))) {
+			report.say(`${settings} already has a SessionStart entry for ${hookScript}, not added by this install — left as is`);
+			return;
 		}
-		if (plan.remove.length) {
-			const r = skillsCli(ctx, ['remove', '-g', '-y', '-a', AGENT, '-s', ...plan.remove]);
-			if (r.status !== 0) return report.error(`skills CLI remove failed (exit ${r.status})`);
-			m.items = m.items.filter((i) => !(i.kind === 'skill' && plan.remove.includes(i.name)));
-		}
-		let failed = false;
-		if (plan.add.length) {
-			const r = skillsCli(ctx, ['add', SKILLS_SRC, '-g', '-y', '--copy', '-a', AGENT, '-s', ...plan.add]);
-			failed = r.status !== 0;
-			if (failed) report.error(`skills CLI add failed (exit ${r.status}); re-run install to converge`);
-		}
-		// Record what landed, even after a failure, so uninstall can reverse it.
-		for (const n of plan.add) {
-			const path = join(t.skillsDir, n);
-			if (existsSync(join(path, 'SKILL.md')) && !find(m, (i) => i.kind === 'skill' && i.name === n)) {
-				m.items.push({ kind: 'skill', name: n, agent: AGENT, path });
+		backupOnce(ctx, m, settings);
+		json.hooks ??= {};
+		json.hooks.SessionStart ??= [];
+		json.hooks.SessionStart.push({ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: shQuote(hookScript) }] });
+		writeAtomic(settings, jsonLike(json, text));
+		add(m, hookEntryItem(NAME, settings, 'SessionStart', hookScript));
+		noteSharedFile(m, settings, sharedFile(m, settings)?.existedBefore ?? text !== null);
+	}
+
+	function removeHook(m, report) {
+		const entry = first(m, 'hook-entry', (i) => i.path === settings);
+		if (entry) {
+			const text = readText(settings);
+			const rec = sharedFile(m, settings);
+			drop(m, entry);
+			if (text !== null) {
+				const json = stripHookEntry(JSON.parse(text), entry);
+				if (Object.keys(json).length === 0 && rec && !rec.existedBefore) {
+					rmSync(settings, { force: true }); // the install created it for this entry alone
+					drop(m, rec);
+				} else {
+					writeAtomic(settings, jsonLike(json, text));
+					noteSharedFile(m, settings, rec?.existedBefore ?? true);
+				}
 			}
 		}
-		if (failed) return;
+		for (const f of hookFiles) {
+			const rec = ownedFile(m, f.dest);
+			const kept = rec && reverseOwnedFile(m, rec);
+			if (kept) report.say(`kept ${kept}`);
+		}
+	}
 
-		// 3–4. The four carried agents and the ten effort agents, by bare name.
-		for (const a of t.agents) placeOwnedFile(ctx, m, report, { kind: 'agent', name: a.name, path: a.dest, content: readFileSync(a.src) });
+	return {
+		name: NAME,
+		label: 'Claude Code',
+		stripHookEntry,
 
-		// 5. The routing hook: its files, then one identifiable settings entry.
-		for (const f of t.hookFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src), mode: f.mode });
-		const existed = existsSync(t.settings);
-		const settings = readJsonObject(t.settings);
-		const groups = settings.hooks?.SessionStart;
-		if (!(Array.isArray(groups) && groups.some((g) => hookHasCommand(g, t.hookScript)))) {
-			backupOnce(ctx, m, t.settings);
-			settings.hooks ??= {};
-			settings.hooks.SessionStart ??= [];
-			settings.hooks.SessionStart.push({ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: t.hookCommand }] });
-			writeAtomic(t.settings, jsonText(settings));
-			noteSharedFile(m, t.settings, fileRecord(m, t.settings)?.existedBefore ?? existed);
-		}
-		if (!find(m, (i) => i.kind === 'hook-entry' && i.path === t.settings)) {
-			m.items.push({ kind: 'hook-entry', path: t.settings, event: 'SessionStart', marker: t.hookScript });
-		}
+		paths: () => [skillsDir, settings, claudeMd, sheet, ...agents.map((a) => a.dest), ...hookFiles.map((f) => f.dest)],
 
-		// 6. The model sheet, setup-pstack's default shape, only when absent.
-		if (!existsSync(t.sheet)) {
-			placeOwnedFile(ctx, m, report, { path: t.sheet, content: defaultSheet() });
-		} else if (!fileRecord(m, t.sheet)) {
-			report.say(`${t.sheet} already exists — kept as is`);
-		}
+		preconditions(report) {
+			try {
+				readJsonObject(settings);
+			} catch (e) {
+				report.error(`${settings} does not parse as a JSON object (${e.message}) — fix it and re-run`);
+			}
+			const md = readText(claudeMd);
+			if (md !== null) {
+				try {
+					blockRange(md, SHEET_BLOCK);
+				} catch (e) {
+					report.error(`${claudeMd}: ${e.message} — remove the partial block and re-run`);
+				}
+			}
+		},
 
-		// 7. The CLAUDE.md block with the sheet include.
-		const [start, end] = markers(SHEET_BLOCK);
-		const block = `${start}\n@${t.sheet}\n${end}\n`;
-		const before = readText(t.claudeMd);
-		const range = before === null ? null : blockRange(before, SHEET_BLOCK);
-		let after;
-		let sep = '';
-		if (range) after = before.slice(0, range[0]) + block + before.slice(range[1]);
-		else if (before === null || before === '') after = block;
-		else {
-			sep = before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
-			after = before + sep + block;
-		}
-		if (after !== before) {
-			backupOnce(ctx, m, t.claudeMd);
-			writeAtomic(t.claudeMd, after);
-			noteSharedFile(m, t.claudeMd, fileRecord(m, t.claudeMd)?.existedBefore ?? before !== null);
-		}
-		if (!find(m, (i) => i.kind === 'marked-block' && i.path === t.claudeMd)) {
-			m.items.push({ kind: 'marked-block', path: t.claudeMd, id: SHEET_BLOCK, before: sep });
-		}
+		// A skill name already present for Claude Code, in the skills CLI's
+		// lock, or in its canonical directory, and not installed by us, belongs
+		// to someone else: installing over it would make the CLI's remove
+		// delete the operator's copy and lock entry at uninstall. Skipped.
+		planSkills(m, desired) {
+			const ours = new Set(items(m, 'skill', (i) => i.agent === NAME).map((i) => i.name));
+			const lock = readSkillsLock(ctx)?.skills ?? {};
+			const collisions = desired.filter(
+				(n) => !ours.has(n) && (lexists(join(skillsDir, n)) || n in lock || lexists(join(ctx.canonicalSkillsDir, n))),
+			);
+			return {
+				desired,
+				add: desired.filter((n) => !collisions.includes(n)),
+				remove: [...ours].filter((n) => !desired.includes(n)).sort(),
+				collisions,
+			};
+		},
+
+		describe: (plan) => [
+			...(plan.remove.length ? [`skills remove (${NAME}, user level): ${plan.remove.join(' ')}`] : []),
+			`skills add (${NAME}, user level, copy) from ${SKILLS_SRC} → ${skillsDir}/<name>: ${plan.add.length} skills`,
+			...agents.filter((a) => plan.desired.includes(a.skill)).map((a) => `agent ${a.dest}`),
+			...(plan.desired.includes(ROUTER)
+				? [...hookFiles.map((f) => `hook file ${f.dest}`), `SessionStart hook entry (${HOOK_MATCHER}) in ${settings}`]
+				: [`no routing hook: ${ROUTER} is excluded`]),
+			`model sheet ${sheet} (only if absent)`,
+			`marked block ${SHEET_BLOCK} in ${claudeMd} including @${sheet}`,
+		],
+
+		install(m, plan, report) {
+			// Step 2. Skills through the skills CLI: user level (-g), Claude Code
+			// only, copies (with one agent the CLI copies anyway; --copy says so).
+			ensure(m, skillsLockItem(ctx.skillsLockPath, existsSync(ctx.skillsLockPath)), () => true);
+			if (plan.remove.length) {
+				const r = skillsCli(ctx, ['remove', '-g', '-y', '-a', NAME, '-s', ...plan.remove]);
+				if (r.status !== 0) return report.error(`skills CLI remove failed (exit ${r.status})`);
+				for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.remove.includes(i.name))) drop(m, i);
+			}
+			let failed = false;
+			if (plan.add.length) {
+				const r = skillsCli(ctx, ['add', SKILLS_SRC, '-g', '-y', '--copy', '-a', NAME, '-s', ...plan.add]);
+				failed = r.status !== 0;
+				if (failed) report.error(`skills CLI add failed (exit ${r.status}); re-run install to converge`);
+			}
+			// Record what landed, even after a failure, so uninstall can reverse it.
+			for (const n of plan.add) {
+				const path = join(skillsDir, n);
+				if (existsSync(join(path, 'SKILL.md'))) ensure(m, skillItem(n, NAME, path), (i) => i.agent === NAME && i.name === n);
+			}
+			if (failed) return;
+
+			// Steps 3–4. The carried and effort agents of every installed skill,
+			// by bare name; an agent whose skill is now excluded comes back out.
+			const wanted = agents.filter((a) => plan.desired.includes(a.skill));
+			for (const a of wanted) placeOwnedFile(ctx, m, report, { kind: 'agent', name: a.name, path: a.dest, content: readFileSync(a.src) });
+			for (const rec of items(m, 'agent', (i) => !wanted.some((a) => a.dest === i.path))) {
+				const kept = reverseOwnedFile(m, rec);
+				if (kept) report.say(`kept ${kept}`);
+			}
+
+			// Step 5. The routing hook mandates the router, so it follows it.
+			if (plan.desired.includes(ROUTER)) installHook(m, report);
+			else {
+				report.warn(`${ROUTER} is excluded, so the SessionStart routing hook is not installed`);
+				removeHook(m, report);
+			}
+
+			// Step 6. The model sheet, setup-pstack's default shape, only when absent.
+			if (!existsSync(sheet)) placeOwnedFile(ctx, m, report, { path: sheet, content: defaultSheet() });
+			else if (!ownedFile(m, sheet)) report.say(`${sheet} already exists — kept as is`);
+
+			// Step 7. The CLAUDE.md block with the sheet include.
+			const before = readText(claudeMd);
+			const ours = first(m, 'marked-block', (i) => i.path === claudeMd && i.id === SHEET_BLOCK);
+			if (!ours && before !== null && blockRange(before, SHEET_BLOCK)) {
+				report.say(`${claudeMd} already has an ${SHEET_BLOCK} block, not added by this install — left as is`);
+				return;
+			}
+			const up = upsertBlock(before, SHEET_BLOCK, `@${sheet}\n`);
+			if (up.text !== before) {
+				backupOnce(ctx, m, claudeMd);
+				writeAtomic(claudeMd, up.text);
+				noteSharedFile(m, claudeMd, sharedFile(m, claudeMd)?.existedBefore ?? before !== null);
+			}
+			if (!ours) add(m, markedBlockItem(claudeMd, SHEET_BLOCK, up.before));
+		},
 	};
-
-	return t;
 }
-
-export { fileSha };

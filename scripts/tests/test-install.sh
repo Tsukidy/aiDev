@@ -204,6 +204,7 @@ new_sandbox() { # new_sandbox <name> [rich]
   "model": "opus"
 }
 JSON
+		chmod 600 "$h/.claude/settings.json" # Claude Code keeps it private: it can hold env secrets
 		printf '# My global rules\n\nAlways answer in English.\n' >"$h/.claude/CLAUDE.md"
 		printf -- '---\nname: my-own-skill\ndescription: operator skill\n---\n' >"$h/.claude/skills/my-own-skill/SKILL.md"
 		printf -- '---\nname: comment-sicko\ndescription: the operator wrote this one\n---\n' >"$h/.claude/agents/comment-sicko.md"
@@ -381,15 +382,16 @@ check "settings.json keeps every other hook and key" node -e '
 	const o = JSON.parse(fs.readFileSync(orig, "utf8"));
 	process.exit(JSON.stringify(s) === JSON.stringify(o) ? 0 : 1);
 ' "$h/.claude/settings.json" "$tmp/rich-settings.json" "$hook_script"
+check "settings.json keeps its 0600 mode" test "$(stat -c %a "$h/.claude/settings.json")" = 600
 
 # The routing hook: injects the mandate unless the sheet says off.
 run_hook() { # run_hook <home>  — runs the registered command as Claude Code would
 	local cmd
 	cmd=$(node -e '
 		const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-		const g = s.hooks.SessionStart.find((g) => g.hooks.some((x) => x.command.includes("aidev")));
-		process.stdout.write(g.hooks.find((x) => x.command.includes("aidev")).command);
-	' "$1/.claude/settings.json")
+		const g = s.hooks.SessionStart.find((g) => g.hooks.some((x) => x.command.includes(process.argv[2])));
+		process.stdout.write(g.hooks.find((x) => x.command.includes(process.argv[2])).command);
+	' "$1/.claude/settings.json" "$1/.local/share/aidev/claude-code/hooks/session-start.sh")
 	env -i HOME="$1" CLAUDE_CONFIG_DIR="$1/.claude" PATH="$sysbin:/usr/bin:/bin" sh -c "$cmd"
 }
 hook_out=$(run_hook "$h")
@@ -507,7 +509,7 @@ snap=$(snapshot "$bare/home")
 uninstall_in "$bare" --purge
 check "--purge without --yes and no terminal to confirm on is refused" test $? -ne 0
 check "the refused purge touched nothing" test "$(snapshot "$bare/home")" = "$snap"
-check "the refused purge called no external CLI" test ! -s "$bare/stub.log"
+check "the refused purge called no mutating CLI" no_mutating_calls "$bare"
 
 uninstall_in "$bare" --purge --yes
 check "uninstall --purge --yes exits 0" test $? -eq 0
@@ -611,6 +613,8 @@ mkdir -p "$sb/home/.config/aidev"
 printf '# operator excludes\nfrontend-design\nno-such-skill\n' >"$sb/home/.config/aidev/install-exclude"
 install_in "$sb"
 check "install honours the exclude list" test $? -eq 0
+check "the exclude-list install handed the other skills to the skills CLI" \
+	bash -c 'grep -E "^npx\|.* add .* -s " "$1" | grep -qw thermos' _ "$sb/stub.log"
 check "an excluded skill is not handed to the skills CLI" bash -c '! grep -E "add .* -s .*\bfrontend-design\b" "$1"' _ "$sb/stub.log"
 check "an unknown exclude entry is reported" out_has "$sb" "no-such-skill"
 printf 'frontend-design\nwizard\n' >"$sb/home/.config/aidev/install-exclude"
@@ -633,6 +637,26 @@ install_in "$sb"
 status=$?
 check "excluding reflect is allowed once nothing installed needs it" test "$status" -eq 0
 [ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+check "an excluded skill's carried agent is not installed" test ! -e "$sb/home/.claude/agents/poteto-agent.md"
+check "other skills' agents still are" test -f "$sb/home/.claude/agents/thermo-nuclear-review-subagent.md"
+check "with poteto-mode excluded no routing hook entry is added" \
+	bash -c 'test ! -e "$1" || ! grep -qF "session-start.sh" "$1"' _ "$sb/home/.claude/settings.json"
+check "the skipped routing hook is reported" bash -c 'grep -iF "hook" "$1" | grep -qF "poteto-mode"' _ "$sb/out.txt"
+check "the dependency-guarded install still handed the rest to the skills CLI" \
+	bash -c 'grep -E "^npx\|.* add .* -s " "$1" | grep -qw thermos' _ "$sb/stub.log"
+
+# Newly excluding a skill on a re-run takes its agent and hook back out.
+sb=$(new_sandbox exclude-converge)
+mkdir -p "$sb/home/.config/aidev"
+install_in "$sb"
+printf 'reflect\npoteto-mode\n' >"$sb/home/.config/aidev/install-exclude"
+install_in "$sb"
+check "a re-run that newly excludes poteto-mode removes its agent and the routing hook" \
+	bash -c 'test ! -e "$1/agents/poteto-agent.md" && { test ! -e "$1/settings.json" || ! grep -qF "session-start.sh" "$1/settings.json"; } && test ! -e "$2"' \
+	_ "$sb/home/.claude" "$sb/home/.local/share/aidev/claude-code/hooks/session-start.sh"
+uninstall_in "$sb" --purge --yes
+check "uninstall after that leaves only the operator's exclude list" \
+	test -z "$(ls -A "$sb/home" | grep -vxE '\.(paseo|config)')"
 
 # --- a skill name the operator already has from elsewhere -----------------------------
 
@@ -646,11 +670,94 @@ install_in "$sb"
 check "install with name collisions exits 0" test $? -eq 0
 check "colliding skills are skipped and reported" \
 	bash -c 'grep -qF "find-skills" "$1" && grep -qF "setup-matt-pocock-skills" "$1"' _ "$sb/out.txt"
+check "the non-colliding skills were handed to the skills CLI" \
+	bash -c 'grep -E "^npx\|.* add .* -s " "$1" | grep -qw thermos' _ "$sb/stub.log"
 check "colliding skills are not handed to the skills CLI" \
 	bash -c '! grep -E "add .* -s .*\b(find-skills|setup-matt-pocock-skills)\b" "$1"' _ "$sb/stub.log"
 check "the operator's colliding skill is untouched" grep -qx 'operator copy' "$h/.claude/skills/find-skills/SKILL.md"
 uninstall_in "$sb" --purge --yes
 check "uninstall leaves the colliding skills and the lock as they were" test "$(snapshot "$h")" = "$before"
+
+# --- orders blocks the operator installed before: not ours to remove -------------------
+
+sb=$(new_sandbox prior-orders rich)
+h=$sb/home
+for orders in "$repo/scripts/install-standing-orders.sh" "$repo/personal-extensions/paseo-firstmate-beads-onboarding/install-captain-orders.sh"; do
+	env -i HOME="$h" PASEO_HOME="$h/.paseo" PATH="$tmp/stubs/full:$sysbin:/usr/bin:/bin" STUB_LOG="$sb/stub.log" STUB_STATE="$sb/state" \
+		bash "$orders" >/dev/null 2>&1
+done
+check "fixture: both orders blocks were installed by hand first" \
+	bash -c 'grep -q aidev-standing-orders:end "$1" && grep -q paseo-beads-onboarding:end "$1"' _ "$h/$mate_rel/data/captain.md"
+before=$(snapshot "$h")
+install_in "$sb"
+check "install over hand-installed orders exits 0" test $? -eq 0
+check "hand-installed orders blocks are not recorded as ours" \
+	manifest_true "$sb" '!m.items.some((i) => i.kind === "marked-block" && i.path.endsWith("/captain.md"))'
+uninstall_in "$sb"
+status=$?
+check "uninstall over hand-installed orders exits 0" test "$status" -eq 0
+[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+check "hand-installed orders survive the round trip; the machine matches its snapshot" test "$(snapshot "$h")" = "$before"
+
+# --- shared files that are symlinks (dotfiles) stay symlinks ------------------------------
+
+sb=$(new_sandbox dotfiles rich)
+h=$sb/home
+mkdir -p "$h/dotfiles"
+mv "$h/.claude/settings.json" "$h/dotfiles/settings.json"
+mv "$h/.claude/CLAUDE.md" "$h/dotfiles/CLAUDE.md"
+ln -s ../dotfiles/settings.json "$h/.claude/settings.json"
+ln -s ../dotfiles/CLAUDE.md "$h/.claude/CLAUDE.md"
+before=$(snapshot "$h")
+install_in "$sb"
+check "install through symlinked settings.json and CLAUDE.md exits 0" test $? -eq 0
+check "symlinked settings.json and CLAUDE.md are still symlinks after install" \
+	bash -c 'test -L "$1/settings.json" && test -L "$1/CLAUDE.md"' _ "$h/.claude"
+check "the symlink targets received the hook entry and the block" \
+	bash -c 'grep -qF session-start.sh "$1/settings.json" && grep -qF aidev-pstack-sheet "$1/CLAUDE.md"' _ "$h/dotfiles"
+uninstall_in "$sb" --purge --yes
+check "the dotfiles round trip leaves the machine identical to its snapshot" test "$(snapshot "$h")" = "$before"
+
+# --- settings.json keeps its indentation -----------------------------------------------
+
+sb=$(new_sandbox indent)
+mkdir -p "$sb/home/.claude"
+printf '{\n    "model": "opus"\n}\n' >"$sb/home/.claude/settings.json"
+install_in "$sb"
+check "settings.json keeps its four-space indentation" grep -qxE '    "model": "opus",?' "$sb/home/.claude/settings.json"
+
+# --- a damaged orders block is caught before anything is written -----------------------
+
+sb=$(new_sandbox damaged-captain)
+printf '# Standing orders\n\n<!-- paseo-beads-onboarding:start -->\ncut off\n' >"$sb/home/$mate_rel/data/captain.md"
+refuse_case "a truncated orders block in captain.md" "$sb" full
+check "the damaged-block refusal names captain.md" out_has "$sb" "captain.md"
+
+# --- backups that uninstall keeps survive a reinstall ---------------------------------------
+
+sb=$(new_sandbox kept-backup rich)
+h=$sb/home
+install_in "$sb"
+rm "$h/$mate_rel/data/captain.md"
+uninstall_in "$sb" --purge --yes
+check "a shared file deleted after install keeps its backup, reported" \
+	bash -c 'grep -iF "kept" "$1" | grep -qF "captain.md"' _ "$sb/out.txt"
+kept_backups=$(cd "$h/.local/state/aidev/backups" 2>/dev/null && sha256sum ./* | LC_ALL=C sort)
+check "uninstall kept the backup it could not consume" test -n "$kept_backups"
+install_in "$sb"
+check "a reinstall never overwrites a kept backup" bash -c '
+	cd "$1" && sha256sum -c --quiet <<<"$2"' _ "$h/.local/state/aidev/backups" "$kept_backups"
+
+# --- the plugin copy outlives a failed plugin removal --------------------------------------
+
+sb=$(new_sandbox plugin-remove-fails)
+install_in "$sb"
+run_in "$sb" full STUB_FAIL=paseo-remove -- "$uninstaller"
+check "a failed plugin removal makes uninstall exit nonzero" test $? -ne 0
+check "the plugin's source copy is still there for the daemon" \
+	test -f "$sb/home/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding/index.server.ts"
+uninstall_in "$sb" --purge --yes
+check "a later uninstall finishes the job" test ! -e "$(manifest_of "$sb")"
 
 # --- partial failure converges ----------------------------------------------------------
 

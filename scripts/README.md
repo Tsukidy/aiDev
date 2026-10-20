@@ -9,7 +9,8 @@ they call, and the offline tests for all of it.
 | `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
 | `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below. |
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
-| `lib/aidev-install.mjs`, `lib/claude-code-target.mjs` | Their shared core, and the Claude Code runtime target (the only target implemented, D5). |
+| `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
+| `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
 | `tests/test-install.sh` | The installer and uninstaller's stub-driven offline harness, run against sandboxed homes (run directly, or via `tests/run.sh`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
@@ -60,12 +61,15 @@ checkout staying where it is.
    `poteto-agent`) and 4. **the ten effort agents** (`effort-<level>`,
    `poteto-agent-<level>` for low, medium, high, xhigh, max; vendored from
    pstack-claude under `skills/setup-pstack/agents/`) into the Claude Code
-   agents directory, so they dispatch by bare name.
+   agents directory, so they dispatch by bare name. An agent follows the
+   skill that carries it: excluding `thermos` leaves out its two reviewers.
 5. **The SessionStart routing hook**: the hook script, its mandate text and
    the sheet reader under the data directory, plus one entry in Claude Code's
    `settings.json` (matcher `startup|resume|clear|compact`), identified by the
-   hook script's path. Other hooks and keys are never touched. The hook
-   injects the poteto-mode mandate unless the sheet says `session hook: off`.
+   hook script's path. Other hooks and keys are never touched, and the file
+   keeps its indentation and mode. The hook injects the poteto-mode mandate
+   unless the sheet says `session hook: off`; with `poteto-mode` excluded it
+   is not installed.
 6. **The model sheet** `pstack-models.md`, setup-pstack's default shape, only
    if absent. `setup-pstack` stays available to re-tune it.
 7. **A marked block** (`aidev-pstack-sheet:start` … `:end`) in the global
@@ -84,8 +88,14 @@ checkout staying where it is.
 Re-running converges: after a partial failure (the manifest records what was
 done), after a repo update (changed agents, hook files and the orders block
 are refreshed, the skills re-copied), and after the exclude list changes
-(skills no longer wanted are removed). A file this installer placed and the
-operator then edited is left as is, with a warning.
+(skills, agents and the hook no longer wanted come back out). A file this
+installer placed and the operator then edited is left as is, with a warning.
+
+What the install finds already there is not adopted: an orders block in
+`captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
+entry in `settings.json` that this install did not add is left in place and
+never removed by uninstall. Shared files that are symlinks (dotfiles) are
+written through, so they stay symlinks.
 
 ### The exclude list
 
@@ -123,6 +133,17 @@ excluded skill only warns. A name that is not a skill warns.
 
 The npx package cache under `~/.npm` is npm's and is left alone.
 
+### Known limits
+
+- `create-skill`'s validator (`scripts/quick_validate.py`) needs PyYAML,
+  which nothing here installs or checks, and it rejects the
+  `user-invocable` / `disable-model-invocation` frontmatter many skills here
+  use (PR #22 review). The installer does not touch either.
+- `create-skill` and Claude Code's built-in `skill-creator` may overlap in
+  their triggers; exclude one if that bites.
+- Only `install-standing-orders.sh` upgrades its block in place; the beads
+  captain-orders block stays at the version first installed (below).
+
 ### The manifest
 
 JSON at `<state>/install-manifest.json`: `schemaVersion`, `installedAt` (the
@@ -132,7 +153,7 @@ first install), `repoCommit` (the latest install), and `items`, each with a
 `marked-block` (with the text the install put in front of the block),
 `plugin`, `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
 changes nothing leaves it byte-identical. Uninstall with no manifest refuses
-and touches nothing.
+and touches nothing. `lib/manifest.mjs` defines every kind and its fields.
 
 ### The orders block upgrade story
 

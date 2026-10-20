@@ -5,53 +5,51 @@
 //
 //   node scripts/install.mjs [--dry-run] [--strict]
 //
-// Steps (the Claude Code target owns 2–7, lib/claude-code-target.mjs):
+// Steps (each runtime target owns 2–7; lib/targets.mjs has the contract):
 //   1. preconditions — node ≥ 22.20, npx, bd, paseo on PATH and the Paseo
 //      daemon answering; bun reported (a warning, an error under --strict);
-//      the first mate's home resolvable; every target inside $HOME; the
-//      exclude list must not drop a skill another installed skill's code needs.
-//      Any failure exits nonzero before anything is written.
+//      the first mate's home resolvable and its captain.md blocks intact;
+//      every target inside $HOME; the exclude list must not drop a skill
+//      another installed skill's code needs. Any failure exits nonzero
+//      before anything is written.
 //   2. the curated skills (skills/ minus the operator's exclude list) through
-//      the skills CLI, user level, Claude Code target
-//   3–4. the four carried agents and the ten effort agents → <claude>/agents/
-//   5. the SessionStart routing hook → one entry in <claude>/settings.json
-//   6. <claude>/pstack-models.md, setup-pstack's default, only if absent
-//   7. a marked block in <claude>/CLAUDE.md including the sheet
+//      the skills CLI, user level, per target
+//   3–4. the four carried agents and the ten effort agents of installed skills
+//   5. the SessionStart routing hook → one entry in the target's settings
+//   6. pstack-models.md, setup-pstack's default, only if absent
+//   7. a marked block in the target's CLAUDE.md including the sheet
 //   8. the standing-orders and beads captain-orders installers (their own
 //      idempotency), and the beads onboarding plugin via `paseo plugin install`
 //   9. the install manifest under $XDG_STATE_HOME/aidev, with a backup of
 //      every pre-existing file modified; NOTICE and licenses beside the install
 //
-// Re-running converges: after a partial failure, after a skills update, and
-// after the exclude list changes (skills no longer wanted are removed).
+// Re-running converges: after a partial failure, after a repo update, and
+// after the exclude list changes (what is no longer wanted comes back out).
 
+import { readFileSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import {
 	BEADS_CREATED_NAMES,
 	ONBOARDING_PLUGIN_DIR,
 	REPO,
-	SCHEMA_VERSION,
 	SKILLS_SRC,
 	backupOnce,
-	existsSync,
-	fileRecord,
+	blockRange,
 	findOnPath,
 	insideHome,
 	isDir,
-	join,
 	lexists,
 	loadManifest,
 	makeReport,
+	markers,
 	missingDirs,
-	mkdirSync,
-	noteSharedFile,
 	nodeVersionOk,
+	noteSharedFile,
 	paseoPluginIds,
 	parseFlags,
 	placeOwnedFile,
 	readExcludeList,
-	readFileSync,
 	readText,
-	readdirSync,
 	repoCommit,
 	repoSkills,
 	resolveContext,
@@ -60,7 +58,8 @@ import {
 	saveManifest,
 	skillDependencies,
 } from './lib/aidev-install.mjs';
-import { claudeCodeTarget } from './lib/claude-code-target.mjs';
+import { add, backupOf, beadsDbItem, dirItem, drop, ensure, first, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
+import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
 const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'install');
@@ -90,22 +89,36 @@ else {
 
 const mateHome = resolveMateHome(ctx);
 if (!mateHome) report.error(`first mate home not found under ${ctx.paseoHome} — launch the first mate once so its home exists (or set PASEO_HOME)`);
+const captain = mateHome && join(mateHome, 'data', 'captain.md');
+const captainText = captain && readText(captain);
+for (const o of ORDERS) {
+	try {
+		if (captainText !== null && captainText !== undefined) blockRange(captainText, o.block);
+	} catch (e) {
+		report.error(`${captain}: ${e.message} — remove the partial block and re-run`);
+	}
+}
 
-const target = claudeCodeTarget(ctx);
-const targets = [
-	ctx.claudeDir,
-	ctx.dataDir,
-	ctx.stateDir,
+const targets = installTargets(ctx);
+const licenseFiles = readdirSync(SKILLS_SRC)
+	.filter((f) => /^(LICENSE.*|NOTICE.*\.md|pstack-provenance\.json)$/.test(f))
+	.map((f) => ({ src: join(SKILLS_SRC, f), dest: join(ctx.licensesDir, f) }));
+licenseFiles.push({ src: join(REPO, 'LICENSE'), dest: join(ctx.licensesDir, 'LICENSE-repository') });
+const written = [
 	ctx.paseoHome,
 	ctx.skillsLockPath,
 	ctx.canonicalSkillsDir,
-	...target.paths(),
-	...(mateHome ? [mateHome, join(mateHome, 'data', 'captain.md')] : []),
+	ctx.manifestPath,
+	join(ctx.backupsDir, 'x'),
+	...licenseFiles.map((f) => f.dest),
+	...PLUGIN_FILES.map((f) => join(pluginDest, f)),
+	...targets.flatMap((t) => t.paths()),
+	...(mateHome ? [mateHome, captain] : []),
 ];
-for (const p of targets) {
+for (const p of written) {
 	if (!insideHome(ctx, p)) report.error(`refusing to write outside HOME (${ctx.home}): ${p}`);
 }
-target.preconditions(report);
+for (const t of targets) t.preconditions(report);
 
 let pluginIds = null;
 if (findOnPath('paseo', ctx.env)) {
@@ -133,28 +146,27 @@ try {
 }
 if (report.errors.length) report.die(`${report.errors.length} precondition(s) failed — nothing was written`);
 
-m ??= { schemaVersion: SCHEMA_VERSION, installedAt: new Date().toISOString(), repoCommit: '', items: [] };
 const commit = repoCommit();
-if (m.repoCommit !== commit) m.repoCommit = commit;
+m ??= newManifest(commit);
+m.repoCommit = commit;
 
 // --- plan ---------------------------------------------------------------------------
 
-const skillPlan = target.planSkills(m, desired);
-for (const n of skillPlan.collisions) {
-	report.warn(`skill ${n} is already installed from elsewhere (Claude Code skills dir, skills-CLI lock or ~/.agents/skills) — skipped; remove it there and re-run to install this repo's copy`);
-}
-const licenseFiles = readdirSync(SKILLS_SRC)
-	.filter((f) => /^(LICENSE.*|NOTICE.*\.md|pstack-provenance\.json)$/.test(f))
-	.map((f) => ({ src: join(SKILLS_SRC, f), dest: join(ctx.licensesDir, f) }));
-licenseFiles.push({ src: join(REPO, 'LICENSE'), dest: join(ctx.licensesDir, 'LICENSE-repository') });
-const pluginOurs = m.items.some((i) => i.kind === 'plugin' && i.id === PLUGIN_ID);
-const pluginForeign = pluginIds?.includes(PLUGIN_ID) && !pluginOurs;
+const plans = targets.map((t) => {
+	const plan = t.planSkills(m, desired);
+	for (const n of plan.collisions) {
+		report.warn(`skill ${n} is already installed for ${t.label} from elsewhere (its skills directory, the skills-CLI lock or ~/.agents/skills) — skipped; remove it there and re-run to install this repo's copy`);
+	}
+	return plan;
+});
+const pluginOurs = Boolean(first(m, 'plugin', (i) => i.id === PLUGIN_ID));
+const pluginForeign = pluginIds.includes(PLUGIN_ID) && !pluginOurs;
 
 if (flags['dry-run']) {
 	const plan = [
-		...target.describe(skillPlan),
+		...targets.flatMap((t, i) => t.describe(plans[i])),
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
-		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${join(mateHome, 'data', 'captain.md')})`),
+		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
 		pluginForeign
 			? `plugin ${PLUGIN_ID}: already installed outside this installer — left as is`
 			: `plugin ${PLUGIN_ID}: copy to ${pluginDest}, then paseo plugin install ${pluginDest}`,
@@ -167,31 +179,19 @@ if (flags['dry-run']) {
 
 // --- execute ------------------------------------------------------------------------
 
-const captain = join(mateHome, 'data', 'captain.md');
-const watched = missingDirs(ctx, [
-	...target.paths(),
-	join(target.skillsDir, 'x'),
-	ctx.skillsLockPath,
-	ctx.manifestPath,
-	join(ctx.backupsDir, 'x'),
-	...licenseFiles.map((f) => f.dest),
-	...PLUGIN_FILES.map((f) => join(pluginDest, f)),
-	captain,
-]);
+const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
 const finish = (code) => {
-	mkdirSync(ctx.stateDir, { recursive: true }); // the manifest lives here
-	for (const d of watched) {
-		if (isDir(d) && !m.items.some((i) => i.kind === 'dir' && i.path === d)) m.items.push({ kind: 'dir', path: d });
-	}
+	saveManifest(ctx, m); // creates the state directory before it is recorded
+	for (const d of watched) if (isDir(d)) ensure(m, dirItem(d), (i) => i.path === d);
 	saveManifest(ctx, m);
-	if (code) report.die(`stopped after an error; the manifest records what was done — re-run to converge, or uninstall`);
+	if (code) report.die('stopped after an error; the manifest records what was done — re-run to converge, or uninstall');
 	report.say(`done; manifest at ${ctx.manifestPath}`);
 	if (report.warnings.length) report.say(`${report.warnings.length} warning(s) above`);
 	process.exit(0);
 };
 
-// Steps 2–7.
-target.install(m, skillPlan, report);
+// Steps 2–7, per target.
+targets.forEach((t, i) => t.install(m, plans[i], report));
 if (report.errors.length) finish(1);
 
 // Attribution travels with the install: NOTICE, the provenance manifest and
@@ -199,33 +199,38 @@ if (report.errors.length) finish(1);
 for (const f of licenseFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src) });
 
 // Step 8a: the two orders installers, each appending its own marked block.
-// What each appends is recorded, so uninstall removes exactly that.
-const captainExisted = fileRecord(m, captain)?.existedBefore ?? existsSync(captain);
+// A block is ours only when this install appended it; what was put in front
+// of it is recorded so uninstall removes exactly that.
+const captainExisted = sharedFile(m, captain)?.existedBefore ?? captainText !== null;
+const freshBackup = !backupOf(m, captain);
+if (captainExisted) backupOnce(ctx, m, captain);
 for (const o of ORDERS) {
 	const pre = readText(captain) ?? '';
 	const beadsBefore = o.beads ? BEADS_CREATED_NAMES.filter((n) => lexists(join(mateHome, n))) : [];
-	if (captainExisted) backupOnce(ctx, m, captain);
 	const r = run(ctx, 'bash', [o.script]);
 	if (r.status !== 0) {
 		report.error(`${o.script} failed (exit ${r.status})`);
 		break;
 	}
 	const post = readText(captain) ?? '';
-	const start = `<!-- ${o.block}:start -->`;
-	if (!m.items.some((i) => i.kind === 'marked-block' && i.path === captain && i.id === o.block)) {
-		const si = post.indexOf(start);
-		const before = post.startsWith(pre) && si >= pre.length ? post.slice(pre.length, si) : '';
-		m.items.push({ kind: 'marked-block', path: captain, id: o.block, before });
+	if (!blockRange(pre, o.block) && blockRange(post, o.block) && post.startsWith(pre)) {
+		const at = post.indexOf(markers(o.block)[0], pre.length);
+		add(m, markedBlockItem(captain, o.block, post.slice(pre.length, at)));
 	}
 	if (o.beads) {
 		for (const n of BEADS_CREATED_NAMES) {
 			const p = join(mateHome, n);
-			if (!beadsBefore.includes(n) && lexists(p) && !m.items.some((i) => i.kind === 'beads-db' && i.path === p)) {
-				m.items.push({ kind: 'beads-db', path: p });
-			}
+			if (!beadsBefore.includes(n) && lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
 		}
 	}
-	if (post !== pre) noteSharedFile(m, captain, captainExisted);
+}
+const captainNow = readText(captain);
+if (captainNow !== captainText || sharedFile(m, captain)) noteSharedFile(m, captain, captainExisted);
+else if (freshBackup && backupOf(m, captain)) {
+	// Nothing changed and nothing of ours is in it: no backup to keep.
+	const b = backupOf(m, captain);
+	rmSync(b.path, { force: true });
+	drop(m, b);
 }
 if (report.errors.length) finish(1);
 
@@ -247,7 +252,7 @@ if (pluginForeign) {
 	} else if (changed) {
 		run(ctx, 'paseo', ['plugin', 'reload', PLUGIN_ID]);
 	}
-	if (!pluginOurs) m.items.push({ kind: 'plugin', id: PLUGIN_ID, path: pluginDest });
+	ensure(m, pluginItem(PLUGIN_ID, pluginDest), (i) => i.id === PLUGIN_ID);
 }
 
 finish(0);

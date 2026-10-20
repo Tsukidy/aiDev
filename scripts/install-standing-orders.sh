@@ -147,8 +147,8 @@ ORDERS
 
 has_start=no
 has_end=no
-grep -qF 'aidev-standing-orders:start' "$target" && has_start=yes
-grep -qF 'aidev-standing-orders:end' "$target" && has_end=yes
+grep -qxF '<!-- aidev-standing-orders:start -->' "$target" && has_start=yes
+grep -qxF '<!-- aidev-standing-orders:end -->' "$target" && has_end=yes
 case "$has_start$has_end" in
 yesno) die "a truncated orders block (start marker without end) exists at $target — remove the partial block and re-run" ;;
 noyes) die "an orphaned orders end marker (end without start) exists at $target — remove the stale block and re-run" ;;
@@ -163,7 +163,7 @@ yesyes)
 		const start = text.indexOf("<!-- aidev-standing-orders:start -->");
 		const endMarker = "<!-- aidev-standing-orders:end -->";
 		const end = text.indexOf(endMarker);
-		if (end < start) { process.stdout.write("damaged"); process.exit(0); }
+		if (start < 0 || end < start) { process.stdout.write("damaged"); process.exit(0); }
 		const current = text.slice(start, end + endMarker.length);
 		if (current === block) { process.stdout.write("same"); process.exit(0); }
 		fs.writeFileSync(file, text.slice(0, start) + block + text.slice(end + endMarker.length));

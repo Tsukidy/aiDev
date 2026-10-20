@@ -663,33 +663,17 @@ check "git status lists whitelisted files only (the root LICENSE, not its neighb
 # root for the repository, and in skills/ beside the other license files.
 check "the root LICENSE is the same text as skills/LICENSE-aidev" cmp -s "$repo/LICENSE" "$real_skills/LICENSE-aidev"
 
-# --- the standing-orders installer seam (ticket #08) -----------------------------
+# --- the installer seams, each with its own harness --------------------------------
 
-if installer_out=$(bash "$here/test-standing-orders.sh" 2>&1); then
-	printf '%s\n' "$installer_out"
-	checks=$((checks + 1))
-	printf 'ok   the standing-orders installer tests pass\n'
-else
-	installer_status=$?
-	printf '%s\n' "$installer_out"
-	checks=$((checks + 1))
-	printf 'FAIL the standing-orders installer tests pass (exit %s)\n' "$installer_status"
-	failures=$((failures + 1))
-fi
+run_harness() { # run_harness <script> <label>
+	local out status=0
+	out=$(bash "$here/$1" 2>&1) || status=$?
+	printf '%s\n' "$out"
+	check "$2 (exit $status)" test "$status" -eq 0
+}
 
-# --- the one-command installer and uninstaller seam (ticket #21) -------------------
-
-if setup_out=$(bash "$here/test-install.sh" 2>&1); then
-	printf '%s\n' "$setup_out"
-	checks=$((checks + 1))
-	printf 'ok   the installer and uninstaller tests pass\n'
-else
-	setup_status=$?
-	printf '%s\n' "$setup_out"
-	checks=$((checks + 1))
-	printf 'FAIL the installer and uninstaller tests pass (exit %s)\n' "$setup_status"
-	failures=$((failures + 1))
-fi
+run_harness test-standing-orders.sh "the standing-orders installer tests pass (ticket #08)"
+run_harness test-install.sh "the installer and uninstaller tests pass (ticket #21)"
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
