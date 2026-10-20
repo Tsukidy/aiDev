@@ -5,7 +5,9 @@
 # in a temporary directory, one per rule: duplicates, each unresolvable
 # reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
 # control showing a carried agent definition satisfies the agent-reference
-# rule, and finally against the repo's real skills/ tree) and the
+# rule, a node_modules dependency tree that must be skipped, and finally
+# against the repo's real skills/ tree), the .gitignore rule that keeps
+# node_modules out of git (in a throwaway repository), and the
 # standing-orders installer from ticket #08 (its own harness in
 # test-standing-orders.sh, invoked at the end).
 #
@@ -257,6 +259,64 @@ ln -s "$tmp/does-not-exist-anywhere" "$tree/alpha/notes.md"
 run_checker "$tree"
 check "an unreadable file (dangling symlink) is reported, not crashed on" test "$status" -eq 1
 check "the unreadable-file report names the file" grep -q 'unreadable file' <<<"$output"
+
+# --- dependency trees (#25) ---------------------------------------------------------
+#
+# poteto-mode's script bootstrap runs `bun install` into its own scripts
+# directory, leaving a node_modules full of third-party markdown. The
+# fixture package below violates several rules (dangling link, unknown slash
+# mention, pstack: reference, a dangling .bin symlink); the control proves it
+# does, so the node_modules case passing is not vacuous.
+
+make_dependency() { # make_dependency <dir>
+	mkdir -p "$1/commander" "$1/.bin"
+	cat >"$1/commander/Readme.md" <<'EOF'
+# commander
+
+See [the docs](./docs/options.md) and run `/not-a-skill`.
+EOF
+	printf '{ "note": "pstack:not-ours" }\n' >"$1/commander/package.json"
+	ln -s ../commander/missing.js "$1/.bin/commander"
+}
+
+tree="$tmp/dependency-control"
+make_skill alpha
+make_dependency "$tree/alpha/scripts/lib"
+run_checker "$tree"
+check "the dependency fixture violates the rules outside node_modules (control)" test "$status" -eq 1
+
+tree="$tmp/node-modules"
+make_skill alpha
+make_dependency "$tree/alpha/scripts/node_modules"
+make_dependency "$tree/node_modules"
+run_checker "$tree"
+check "node_modules inside a skill and at the root is skipped (exit 0)" test "$status" -eq 0
+check "the node_modules report starts with ok:" grep -q '^ok:' <<<"$output"
+
+# --- .gitignore: node_modules never becomes pushable (#25) -------------------------
+#
+# A throwaway repository carrying the real .gitignore: dependency trees under
+# every whitelisted directory stay out of `git status`, and the whitelist
+# still hides everything else.
+
+gitrepo="$tmp/gitignore"
+# Ignore the operator's global and system git config (e.g. a core.excludesFile)
+# so only the repo's .gitignore decides what shows up.
+fixture_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$gitrepo" "$@"; }
+mkdir -p "$gitrepo"
+fixture_git init -q
+cp "$repo/.gitignore" "$gitrepo/.gitignore"
+for dir in skills/alpha/scripts scripts personal-extensions/ext; do
+	mkdir -p "$gitrepo/$dir/node_modules/commander"
+	printf 'kept\n' >"$gitrepo/$dir/kept.txt"
+	printf 'dependency\n' >"$gitrepo/$dir/node_modules/commander/index.js"
+done
+mkdir -p "$gitrepo/docs"
+printf 'local\n' >"$gitrepo/docs/local.md"
+printf 'local\n' >"$gitrepo/CONTEXT.md"
+untracked=$(fixture_git status --porcelain --untracked-files=all | sed 's/^?? //' | sort)
+expected=$(printf '%s\n' .gitignore personal-extensions/ext/kept.txt scripts/kept.txt skills/alpha/scripts/kept.txt)
+check "git status lists whitelisted files only, never node_modules" test "$untracked" = "$expected"
 
 # --- the standing-orders installer seam (ticket #08) -----------------------------
 

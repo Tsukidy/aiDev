@@ -6,7 +6,7 @@ is `npx skills add` from this repo, per machine (design of record:
 
 | File | Role |
 | --- | --- |
-| `verify-curation.mjs` | The curation gate (ticket #12): duplicate names, unresolvable references, frontmatter validity, the `pstack:` ban. Run against `skills/` (no args) or any fixture tree. |
+| `verify-curation.mjs` | The curation gate (ticket #12): duplicate names, unresolvable references, frontmatter validity, the `pstack:` ban. Run against `skills/` (no args) or any fixture tree. Skips `node_modules` (a local `bun install` never changes the verdict). |
 | `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below. |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. See below. |
 | `tests/test-standing-orders.sh` | The installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |

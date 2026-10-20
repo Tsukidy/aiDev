@@ -7,6 +7,10 @@
 !/personal-extensions
 !/scripts
 
+# Dependency installs inside whitelisted directories (e.g. poteto-mode's script
+# bootstrap runs `bun install` into its scripts directory) are never pushed.
+node_modules/
+
 # Artifacts of installing skills INTO this repo — this repo is a skill source,
 # so `npx skills add` should only ever be run against it, not inside it.
 # (Redundant under the whitelist, kept as guard rails if it is ever relaxed.)

@@ -4,6 +4,7 @@
 // source tree (default `skills/`, override as argv[1]). Zero npm dependencies.
 // Exit 0 = the tree is a coherent, installable skill set; exit 1 = one report
 // line per violation (`<file>:<line>: what (expected ...; actual ...)`).
+// `node_modules` directories are skipped at every depth (see SKIPPED_DIRS).
 //
 // The reference grammar below was derived by surveying the syntaxes that
 // actually occur in this repo's fork tree (skills/) and in the upstream tree
@@ -83,10 +84,17 @@ function report(file, line, message) {
 
 // --- tree walk ------------------------------------------------------------------
 
+// Dependency directories are local install output, not curated content (e.g.
+// poteto-mode's script bootstrap runs `bun install` into its scripts
+// directory). They are skipped everywhere, so a local install never changes
+// the verdict. .gitignore keeps them out of git the same way.
+const SKIPPED_DIRS = new Set(['node_modules']);
+
 function walk(dir) {
 	const entries = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const p = join(dir, entry.name);
+		if (entry.isDirectory() && SKIPPED_DIRS.has(entry.name)) continue;
 		if (entry.isDirectory()) entries.push(...walk(p));
 		else entries.push(p);
 	}
@@ -260,7 +268,7 @@ function resolveWithin(base, target) {
 // --- pass 1: skill identity + frontmatter ---------------------------------------------
 
 const topDirs = readdirSync(root, { withFileTypes: true })
-	.filter((e) => e.isDirectory())
+	.filter((e) => e.isDirectory() && !SKIPPED_DIRS.has(e.name))
 	.map((e) => e.name)
 	.sort();
 
