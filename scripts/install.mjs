@@ -19,7 +19,8 @@
 //   6. pstack-models.md, setup-pstack's default, only if absent
 //   7. a marked block in the target's CLAUDE.md including the sheet
 //   8. the standing-orders and beads captain-orders installers (their own
-//      idempotency), and the beads onboarding plugin via `paseo plugin install`
+//      idempotency), and the beads onboarding plugin: a copy with its locked
+//      dependencies (`npm ci`), then `paseo plugin install` (or `reload`)
 //   9. the install manifest under $XDG_STATE_HOME/aidev, with a backup of
 //      every pre-existing file modified; NOTICE and licenses beside the install
 //
@@ -46,7 +47,7 @@ import {
 	missingDirs,
 	nodeVersionOk,
 	noteSharedFile,
-	paseoPluginIds,
+	paseoPlugins,
 	parseFlags,
 	placeOwnedFile,
 	readExcludeList,
@@ -59,7 +60,7 @@ import {
 	saveManifest,
 	skillDependencies,
 } from './lib/aidev-install.mjs';
-import { add, backupOf, beadsDbItem, dirItem, drop, ensure, first, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
+import { add, backupOf, beadsDbItem, dirItem, drop, ensure, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
 import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
@@ -67,7 +68,7 @@ const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'inst
 const ctx = resolveContext(process.env);
 const PLUGIN_ID = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'paseo-plugin.json'), 'utf8')).id;
 const pluginDest = join(ctx.dataDir, 'paseo-plugins', PLUGIN_ID);
-const PLUGIN_FILES = ['index.server.ts', 'paseo-plugin.json', 'package.json', 'tsconfig.json', 'README.md'];
+const PLUGIN_FILES = ['index.server.ts', 'paseo-plugin.json', 'package.json', 'package-lock.json', 'tsconfig.json', 'README.md'];
 const ORDERS = [
 	{ script: join(REPO, 'scripts', 'install-standing-orders.sh'), block: 'aidev-standing-orders' },
 	{ script: join(ONBOARDING_PLUGIN_DIR, 'install-captain-orders.sh'), block: 'paseo-beads-onboarding', beads: true },
@@ -76,7 +77,7 @@ const ORDERS = [
 // --- 1. preconditions -------------------------------------------------------------
 
 if (!nodeVersionOk()) report.error(`node ${process.versions.node} is too old: the skills CLI needs node ≥ 22.20`);
-for (const tool of ['npx', 'bd', 'paseo']) {
+for (const tool of ['npx', 'npm', 'bd', 'paseo']) {
 	if (!findOnPath(tool, ctx.env)) report.error(`${tool} not found on PATH (checked and reported, never installed)`);
 }
 const bun = findOnPath('bun', ctx.env);
@@ -130,10 +131,10 @@ for (const p of written) {
 }
 for (const t of targets) t.preconditions(report);
 
-let pluginIds = null;
+let plugins = null;
 if (findOnPath('paseo', ctx.env)) {
-	pluginIds = paseoPluginIds(ctx);
-	if (!pluginIds) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
+	plugins = paseoPlugins(ctx);
+	if (!plugins) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
 }
 
 // The exclude list (operator-owned, never written by us) and the dependency
@@ -169,8 +170,11 @@ const plans = targets.map((t) => {
 	}
 	return plan;
 });
-const pluginOurs = Boolean(first(m, 'plugin', (i) => i.id === PLUGIN_ID));
-const pluginForeign = pluginIds.includes(PLUGIN_ID) && !pluginOurs;
+// A registration is ours when it is from our copy, recorded or not: the daemon
+// keeps a plugin whose build failed (as failed), and an install that stopped
+// there recorded no plugin (#33). One from anywhere else is not ours.
+const registered = plugins.find((p) => p.id === PLUGIN_ID);
+const pluginForeign = Boolean(registered) && registered.path !== pluginDest;
 
 if (flags['dry-run']) {
 	const plan = [
@@ -179,7 +183,7 @@ if (flags['dry-run']) {
 		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
 		pluginForeign
 			? `plugin ${PLUGIN_ID}: already installed outside this installer — left as is`
-			: `plugin ${PLUGIN_ID}: copy to ${pluginDest}, then paseo plugin install ${pluginDest}`,
+			: `plugin ${PLUGIN_ID}: copy to ${pluginDest}; when it changed or is not running, npm ci there, then paseo plugin ${registered ? `reload ${PLUGIN_ID}` : `install ${pluginDest}`}`,
 		`manifest ${ctx.manifestPath}`,
 	];
 	console.log('install --dry-run: nothing written. The plan:');
@@ -246,23 +250,36 @@ if (report.errors.length) finish(1);
 
 // Step 8b: the onboarding plugin, from a copy under the data directory, so the
 // daemon never depends on where this checkout lives or which branch it is on.
+// The daemon builds the copy where it lies and resolves its type imports
+// (@getpaseo/client) from the copy's node_modules, so the locked dependencies
+// are installed there first (#33).
 if (pluginForeign) {
 	report.say(`plugin ${PLUGIN_ID} is already installed outside this installer — left as is`);
 } else {
+	// Recorded before anything can fail: a failed build still leaves the
+	// plugin registered, and npm ci leaves node_modules in the copy.
+	ensure(m, pluginItem(PLUGIN_ID, pluginDest), (i) => i.id === PLUGIN_ID);
 	let changed = false;
 	for (const f of PLUGIN_FILES) {
 		changed = placeOwnedFile(ctx, m, report, { path: join(pluginDest, f), content: readFileSync(join(ONBOARDING_PLUGIN_DIR, f)) }) || changed;
 	}
-	if (!pluginIds.includes(PLUGIN_ID)) {
-		const r = run(ctx, 'paseo', ['plugin', 'install', pluginDest]);
-		if (r.status !== 0) {
-			report.error(`paseo plugin install ${pluginDest} failed (exit ${r.status})`);
+	if (changed || !registered || registered.status === 'failed' || !isDir(join(pluginDest, 'node_modules'))) {
+		const deps = run(ctx, 'npm', ['ci', '--include=dev', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: pluginDest });
+		if (deps.status !== 0) {
+			report.error(`npm ci in ${pluginDest} failed (exit ${deps.status}) — it needs the npm registry or a warm npm cache`);
 			finish(1);
 		}
-	} else if (changed) {
-		run(ctx, 'paseo', ['plugin', 'reload', PLUGIN_ID]);
+		if (registered?.status === 'disabled') {
+			report.say(`plugin ${PLUGIN_ID} is disabled in Paseo — left disabled; it builds from the refreshed copy when enabled`);
+		} else {
+			const args = registered ? ['reload', PLUGIN_ID] : ['install', pluginDest];
+			const r = run(ctx, 'paseo', ['plugin', ...args]);
+			if (r.status !== 0) {
+				report.error(`paseo plugin ${args.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows the error`);
+				finish(1);
+			}
+		}
 	}
-	ensure(m, pluginItem(PLUGIN_ID, pluginDest), (i) => i.id === PLUGIN_ID);
 }
 
 finish(0);

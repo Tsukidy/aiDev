@@ -10,7 +10,9 @@
 //   hook-entry    our entry in a shared settings file (target, event, marker)
 //   marked-block  our marked block in a shared text file (id, before: the text
 //                 the install put in front of the block)
-//   plugin        a Paseo plugin we installed (id)
+//   plugin        a Paseo plugin we install (id) from our copy at `path`, with
+//                 the dependencies npm put in its node_modules; recorded
+//                 before the daemon registers it
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created

@@ -18,15 +18,17 @@ and the memory store simply exists.
 | `install-captain-orders.sh` | **Standing orders** (the behavioral half): appends the marked memory rules block to the mate's `data/captain.md` (never overwritten by the plugin, outranks the charter, read every session) and creates the mate-global memory database in the home (`bd init --quiet --stealth`). Idempotent; resolves the mate's home exactly as firstmate 0.3.4 does (`plugin-data/firstmate/config.json` → `~` expansion → default → legacy `plugins/firstmate/home`) and refuses politely when no home exists. |
 | `tests/run.sh` | Offline verification: 9 handler tests + 21 installer checks (see below). |
 
-Nothing in this directory is installed by this repo. It is delivered for **you**
-to install on the Paseo daemon machine; agents never write there.
+`scripts/install.mjs` at the repository root installs both halves for you
+(ticket #21): the plugin from a copy with its locked dependencies, since the
+daemon's build resolves the plugin's type imports (`@getpaseo/client`) from the
+copy's `node_modules` (#33). The steps below are the manual equivalent.
 
 ## Usage
 
 ```sh
 # Once, per machine (order matters: the mate's home must exist, so launch the
 # first mate at least once before installing):
-npm install && npm run typecheck        # verify the plugin source
+npm ci && npm run typecheck             # locked dependencies the daemon's build needs; verify the source
 paseo plugin install /absolute/path/to/this/directory
 paseo plugin ls                         # firstmate-beads-onboarding must be running
 ./install-captain-orders.sh             # standing orders + the home memory DB

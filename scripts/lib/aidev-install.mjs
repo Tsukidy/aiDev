@@ -489,12 +489,14 @@ export function run(ctx, cmd, args, { cwd, capture = false, env = {} } = {}) {
 	return { status: r.error ? 127 : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-export function paseoPluginIds(ctx) {
+// The daemon's plugin registrations (`paseo plugin ls --json`: id, path,
+// enabled, status), or null when the daemon does not answer.
+export function paseoPlugins(ctx) {
 	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
 	if (r.status !== 0) return null;
 	try {
 		const list = JSON.parse(r.stdout);
-		return Array.isArray(list) ? list.map((p) => p.id) : null;
+		return Array.isArray(list) ? list : null;
 	} catch {
 		return null;
 	}
