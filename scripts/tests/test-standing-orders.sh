@@ -211,7 +211,7 @@ check "orders keep one seam and one test per cycle" has "one seam and one test p
 check "orders route bug fixes to tdd" has 'Bug fixes use `tdd`'
 check "orders name tdd for bug fixes only" \
 	test "$(grep -oF '`tdd`' <<<"$flat" | wc -l)" -eq "$(grep -oF 'Bug fixes use `tdd`' <<<"$flat" | wc -l)"
-check "orders no longer point at a merged tdd" bash -c '! grep -qiE "merged .?tdd" <<<"$1"' _ "$flat"
+check "orders drop the old tdd-merge wording" bash -c '! grep -qiE "merged[[:space:]]+.?tdd" <<<"$1"' _ "$flat"
 
 # --- every skill the orders name exists in the final tree ----------------------
 #
