@@ -5,7 +5,9 @@
 # in a temporary directory, one per rule: duplicates, each unresolvable
 # reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
 # control showing a carried agent definition satisfies the agent-reference
-# rule, the pstack provenance manifest from #24, a node_modules dependency
+# rule, plugin-rooted paths and namespaced skill references (#26), the pstack
+# provenance manifest from #24 (with #26's copy identity and link pinning),
+# NOTICE.md attribution (#26), a node_modules dependency
 # tree that must be skipped, and finally against the repo's real skills/
 # tree), the .gitignore rule that keeps
 # node_modules out of git (in a throwaway repository), and the
@@ -58,11 +60,12 @@ EOF
 }
 
 # A minimal, fully valid skill in the current $tree fixture: parseable
-# frontmatter with name + description. The first skill in a fixture also
-# writes the empty manifest.
+# frontmatter with name + description, attributed in the tree's NOTICE.md.
+# The first skill in a fixture also writes the empty manifest.
 make_skill() { # make_skill <name>  ($tree is set by the caller)
 	mkdir -p "$tree/$1"
 	[ -e "$tree/$manifest_name" ] || write_empty_manifest "$tree"
+	printf -- '- `%s`: written for this fixture.\n' "$1" >>"$tree/NOTICE.md"
 	cat >"$tree/$1/SKILL.md" <<EOF
 ---
 name: $1
@@ -472,6 +475,21 @@ edit_manifest 'm.modified = m.modified.filter((x) => x.path !== "gamma/licenses/
 run_checker "$tree"
 check "a declared copy the tree does not have fails" test "$status" -eq 1
 check "the missing-copy report names the copy" grep -q 'gamma/licenses/NOTICE.md' <<<"$output"
+
+# Attribution (#26): every skill directory is either adopted in the manifest
+# (NOTICE-skills.md covers those) or named in the tree's NOTICE.md.
+make_provenance_tree "$tmp/provenance-unattributed"
+sed '/`alpha`/d' "$tree/NOTICE.md" >"$tree/NOTICE.md.new"
+mv "$tree/NOTICE.md.new" "$tree/NOTICE.md"
+run_checker "$tree"
+check "a skill named neither in NOTICE.md nor as adopted fails" test "$status" -eq 1
+check "the attribution report names the skill" grep -q '"alpha".*NOTICE.md' <<<"$output"
+check "adopted skills need no NOTICE.md entry" test "$(grep -c '"gamma"\|"understand"' <<<"$output")" -eq 0
+
+make_provenance_tree "$tmp/provenance-no-notice"
+rm "$tree/NOTICE.md"
+run_checker "$tree"
+check "a tree without NOTICE.md fails" test "$status" -eq 1
 
 make_provenance_tree "$tmp/provenance-no-manifest"
 rm "$tree/$manifest_name"

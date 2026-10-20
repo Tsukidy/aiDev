@@ -31,9 +31,10 @@
 //    check exact rather than noisy.)
 //
 //    a. Slash mentions: a code span whose whole content is `/name` with a
-//       skill-shaped name (e.g. `` `/tdd` `` in ask-matt/SKILL.md) must name
-//       an existing skill, or a known non-skill built-in (`clear`, `compact`,
-//       `settings`, `tmp` — Claude Code CLI commands and plain paths).
+//       skill-shaped name (e.g. `` `/grilling` `` in loop-me/SKILL.md) must
+//       name an existing skill, or a known non-skill built-in (`clear`,
+//       `compact`, `settings`, `tmp` — Claude Code CLI commands and plain
+//       paths). A namespaced `/namespace:name` falls under g.
 //    b. Path-style cross-skill refs: `skills/<name>[/<rest>]` occurring at a
 //       token boundary (not preceded by `/`, word char, dot, or hyphen — this
 //       excludes URLs like github.com/…/skills/blob/…) in prose or backticks.
@@ -61,9 +62,20 @@
 //       resolve to a carried agent definition (`name:` frontmatter of some
 //       agents/*.md in the tree) or a known harness built-in
 //       (`general-purpose`). Values containing `<` are placeholders and
-//       skipped. Separately, ZERO `pstack:`-prefixed references are allowed
-//       anywhere in the tree, in any file type — later tickets rewrite them,
-//       and this verifier enforces that invariant from day one.
+//       skipped; a namespaced value falls under g. Separately, ZERO
+//       `pstack:`-prefixed references are allowed anywhere in the tree, in
+//       any file type — later tickets rewrite them, and this verifier
+//       enforces that invariant from day one.
+//    f. Plugin-rooted paths (#26): ZERO `<plugin>/…` or `${CLAUDE_PLUGIN_ROOT}`
+//       paths anywhere in the tree, in any file type, fences included. A
+//       skills-CLI install has no plugin root; name paths relative to the
+//       skill directory instead.
+//    g. Namespaced skill references (#26): `namespace:name` in the forms that
+//       name a skill unambiguously — bold (`**ns:name**`), followed by the
+//       word "skill", a `/ns:name` slash mention, a `subagent_type` value —
+//       must name a skill (an agent, for subagent_type) in the tree. Bare
+//       `ns:name` spans are not checked: they are mostly labels (`file:line`,
+//       `wayfinder:map`, `lint:boundaries`).
 //
 // 4. Vendored provenance (#24). The tree must carry `pstack-provenance.json`
 //    at its top level (a file, so rule 1 does not apply to it): the upstream
@@ -74,11 +86,19 @@
 //    paths: every adopted and modified path exists, each once, and each
 //    modified file lies inside an adopted path; each upstream path is adopted
 //    once; every upstream skill is either adopted or excluded, so dropping an
-//    adopted entry fails; no excluded skill ships, in any letter case; and
-//    every NOTICE* link into the upstream repository (github.com views and
-//    raw.githubusercontent.com) pins the manifest's sha.
+//    adopted entry fails; no excluded skill ships, in any letter case; each
+//    declared copy (a file upstream ships twice) is byte-identical to its
+//    original; and every link into the upstream repository, in any file
+//    (github.com views and raw.githubusercontent.com), pins the manifest's
+//    sha and, when it points into the upstream skills directory, names an
+//    upstream skill (a renamed skill is linked under its upstream name).
 //    Whether the modified list is complete needs the upstream tree, so it is
 //    rebuilt by diffing on each re-sync, not checked here.
+//
+// 5. Attribution (#26). The tree must carry `NOTICE.md` at its top level,
+//    and every skill directory not adopted in the manifest must be named in
+//    it as a code span (`` `name` ``), in the row giving its source and
+//    license.
 
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative, resolve, dirname, basename, isAbsolute } from 'node:path';
@@ -644,6 +664,27 @@ function checkProvenance() {
 }
 
 const provenance = checkProvenance();
+
+// --- pass 4: attribution (rule 5) ------------------------------------------------------------
+
+const NOTICE = 'NOTICE.md';
+const noticeFile = join(root, NOTICE);
+
+function checkAttribution(manifest) {
+	if (!existsSync(noticeFile) || !statSync(noticeFile).isFile()) {
+		report(noticeFile, 1, `missing ${NOTICE} (expected the tree's notice naming each skill's source and license)`);
+		return;
+	}
+	const notice = fileText(noticeFile);
+	const adopted = new Set(manifest.adopted.map((a) => canonical(a.path)));
+	for (const dir of topDirs) {
+		if (!adopted.has(dir) && !notice.includes(`\`${dir}\``)) {
+			report(join(root, dir), 1, `skill "${dir}" is not attributed (expected \`${dir}\` in ${NOTICE} under its source and license, or an adopted entry in ${MANIFEST})`);
+		}
+	}
+}
+
+if (provenance) checkAttribution(provenance);
 
 // --- report ------------------------------------------------------------------------------
 
