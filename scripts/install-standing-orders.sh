@@ -24,7 +24,9 @@
 #   1. the declared front door — grill → to-spec → to-tickets → GitHub labels
 #   2. one memory wording — CONTEXT.md/ADRs, beads, AGENTS.md
 #   3. the review gate — a fresh thermos-powered review report linked on the issue
-#   4. brief doctrine — agreed seams + acceptance criteria + the execution doctrine
+#   4. brief doctrine — agreed seams + acceptance criteria + the execution
+#      doctrine (features test-first at the agreed seams, `tdd` for bug fixes;
+#      spec #11 D10)
 #   5. PR shape — pr + make-pr-easy-to-review
 #   6. context hygiene — the paragraph rescued from ask-matt, adapted to the fleet
 #   7. retro after landings
@@ -112,10 +114,14 @@ cat >>"$target" <<'ORDERS'
    axis powered by `thermos`, the spec axis diffing against the originating
    issue. A stale report or a self-review does not open the gate.
 4. **Briefs carry the contract.** Every crewmate brief states the agreed seams,
-   the acceptance criteria, and the execution doctrine — the merged
-   `tdd` at the brief's seams, `/blast-radius` before a risky edit,
-   `/show-me-your-work` on unattended runs — and its backlog lines carry
-   their tracker ids.
+   the acceptance criteria, and the execution doctrine, and its backlog lines
+   carry their tracker ids. The execution doctrine:
+   - **Features are built test-first:** write the failing test first at the
+     seams agreed in the spec or brief, then only the code needed to pass
+     it — one seam and one test per cycle.
+   - **Bug fixes use `tdd`.**
+   - `/blast-radius` before a risky edit; `/show-me-your-work` on unattended
+     runs.
 5. **PR shape.** Every PR follows `pr` (smallest visual change, shown before
    and after, merge-danger call) plus `make-pr-easy-to-review` (history
    hygiene); `babysit` is the action half of the review loop.
