@@ -18,7 +18,9 @@
 #
 # Idempotent: the orders block is guarded by the aidev-standing-orders
 # markers; a truncated prior block (start marker without end) is refused
-# instead of appended to.
+# instead of appended to. Upgradable: an older block of ours (both markers
+# present, different text) is replaced in place on re-run; only the text
+# between and including our markers changes (#27, #21).
 #
 # The seven elements the block carries (docs/combined-fleet-workflow.md §5):
 #   1. the declared front door — grill → to-spec → to-tickets → GitHub labels
@@ -33,8 +35,8 @@
 #      here so the vendored playbook stays as upstream wrote it
 #   6. context hygiene — the paragraph rescued from ask-matt, adapted to the fleet
 #   7. retro after landings
-# plus the effort-dispatch note ticket 02 flagged: effort levels ride in the
-# dispatch prompt, never as agent types (those are plugin-only).
+# plus the effort-dispatch note: on Claude Code the installer (#21) registers the
+# effort agents; elsewhere effort levels ride in the dispatch prompt.
 
 set -euo pipefail
 
@@ -81,21 +83,9 @@ if [ ! -f "$target" ]; then
 	printf 'created %s\n' "$target"
 fi
 
-if grep -qF 'aidev-standing-orders:start' "$target"; then
-	if grep -qF 'aidev-standing-orders:end' "$target"; then
-		printf 'standing orders already installed at %s — no change\n' "$target"
-		exit 0
-	fi
-	die "a truncated orders block (start marker without end) exists at $target — remove the partial block and re-run"
-fi
-if grep -qF 'aidev-standing-orders:end' "$target"; then
-	die "an orphaned orders end marker (end without start) exists at $target — remove the stale block and re-run"
-fi
-
-cat >>"$target" <<'ORDERS'
-
-## The combined fleet workflow
-
+# The block itself, start marker through end marker.
+block=$(
+	cat <<'ORDERS'
 <!-- aidev-standing-orders:start -->
 
 1. **The front door is declared.** New work enters through the planning half,
@@ -146,13 +136,49 @@ cat >>"$target" <<'ORDERS'
    environment lessons and `correct` for repo-level structural prevention: a
    repeated mistake becomes impossible, not merely scolded.
 
-**Dispatching at an effort level:** effort-tiered agent types are
-plugin-registered and absent from a skills-only install — when a skill names
-an effort level, pass the level in the dispatch prompt text, never as an
-agent type.
+**Dispatching at an effort level:** on Claude Code the aiDev installer
+registers the effort agents (effort-<level> and poteto-agent-<level>), so a
+skill's effort level dispatches as that agent type, as the skill says. On a
+runtime without them, pass the level in the dispatch prompt text instead.
 
 <!-- aidev-standing-orders:end -->
 ORDERS
+)
+
+has_start=no
+has_end=no
+grep -qxF '<!-- aidev-standing-orders:start -->' "$target" && has_start=yes
+grep -qxF '<!-- aidev-standing-orders:end -->' "$target" && has_end=yes
+case "$has_start$has_end" in
+yesno) die "a truncated orders block (start marker without end) exists at $target — remove the partial block and re-run" ;;
+noyes) die "an orphaned orders end marker (end without start) exists at $target — remove the stale block and re-run" ;;
+yesyes)
+	# Upgrade story (#27, #21): an older block of ours is replaced in place by
+	# the current one. Only the text from our start marker through our end
+	# marker changes; everything the captain wrote around it stays byte-identical.
+	outcome=$(node -e '
+		const fs = require("fs");
+		const [file, block] = process.argv.slice(1);
+		const text = fs.readFileSync(file, "utf8");
+		const start = text.indexOf("<!-- aidev-standing-orders:start -->");
+		const endMarker = "<!-- aidev-standing-orders:end -->";
+		const end = text.indexOf(endMarker);
+		if (start < 0 || end < start) { process.stdout.write("damaged"); process.exit(0); }
+		const current = text.slice(start, end + endMarker.length);
+		if (current === block) { process.stdout.write("same"); process.exit(0); }
+		fs.writeFileSync(file, text.slice(0, start) + block + text.slice(end + endMarker.length));
+		process.stdout.write("upgraded");
+	' "$target" "$block")
+	case "$outcome" in
+	same) printf 'standing orders already installed at %s — no change\n' "$target" ;;
+	upgraded) printf 'upgraded the standing orders block at %s to this version (text outside the markers unchanged)\n' "$target" ;;
+	*) die "a damaged orders block (end marker before start) exists at $target — remove the stale block and re-run" ;;
+	esac
+	exit 0
+	;;
+esac
+
+printf '\n## The combined fleet workflow\n\n%s\n' "$block" >>"$target"
 
 printf 'installed standing orders at %s\n' "$target"
 printf 'the mate reads this file at the start of every session, so it takes effect at its next session; `paseo plugin reload firstmate` restarts it sooner\n'

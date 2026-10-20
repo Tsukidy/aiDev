@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The suite for spec #11's two repo-owned seams: verify-curation.mjs (the
+# The suite for spec #11's repo-owned seams: verify-curation.mjs (the
 # curation gate from ticket #12 — driven against synthetic fixture trees built
 # in a temporary directory, one per rule: duplicates, each unresolvable
 # reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
@@ -13,7 +13,8 @@
 # the root LICENSE (in a throwaway repository), the root LICENSE matching
 # skills/LICENSE-aidev (#29), and the
 # standing-orders installer from ticket #08 (its own harness in
-# test-standing-orders.sh, invoked at the end).
+# test-standing-orders.sh), and the one-command installer and uninstaller
+# from ticket #21 (its own harness in test-install.sh), invoked at the end.
 #
 # Usage: tests/run.sh
 
@@ -662,19 +663,17 @@ check "git status lists whitelisted files only (the root LICENSE, not its neighb
 # root for the repository, and in skills/ beside the other license files.
 check "the root LICENSE is the same text as skills/LICENSE-aidev" cmp -s "$repo/LICENSE" "$real_skills/LICENSE-aidev"
 
-# --- the standing-orders installer seam (ticket #08) -----------------------------
+# --- the installer seams, each with its own harness --------------------------------
 
-if installer_out=$(bash "$here/test-standing-orders.sh" 2>&1); then
-	printf '%s\n' "$installer_out"
-	checks=$((checks + 1))
-	printf 'ok   the standing-orders installer tests pass\n'
-else
-	installer_status=$?
-	printf '%s\n' "$installer_out"
-	checks=$((checks + 1))
-	printf 'FAIL the standing-orders installer tests pass (exit %s)\n' "$installer_status"
-	failures=$((failures + 1))
-fi
+run_harness() { # run_harness <script> <label>
+	local out status=0
+	out=$(bash "$here/$1" 2>&1) || status=$?
+	printf '%s\n' "$out"
+	check "$2 (exit $status)" test "$status" -eq 0
+}
+
+run_harness test-standing-orders.sh "the standing-orders installer tests pass (ticket #08)"
+run_harness test-install.sh "the installer and uninstaller tests pass (ticket #21)"
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

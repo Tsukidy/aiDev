@@ -191,6 +191,35 @@ check "custom orders after the block survive a re-run" \
 	test "$(grep -c 'aidev-standing-orders:start' "$tmp/after-home/data/captain.md")" -eq 1
 check "the post-block custom text is still present" grep -qF 'Custom captain footnote.' "$tmp/after-home/data/captain.md"
 
+# --- upgrade: an older block of ours is replaced in place (#27, #21) ----------
+#
+# A machine that installed an earlier version of the block gets the current
+# one on the next run; only the text between our markers changes.
+
+s=$(make_sandbox upgrade "{\"home\": \"$tmp/up-home\"}" "$tmp/up-home")
+printf '# Standing orders\n\nNever push to main.\n' >"$tmp/up-home/data/captain.md"
+run_installer "$s"
+cp "$tmp/up-home/data/captain.md" "$tmp/up-current.md"
+printf '\nCaptain footnote after the block.\n' >>"$tmp/up-home/data/captain.md"
+# Age the block: an old element line inside the markers.
+sed -i 's/^7\. \*\*Retro after landings\.\*\*.*/7. **An outdated element from an older install.**/' "$tmp/up-home/data/captain.md"
+run_installer "$s"
+check "an older block is upgraded in place on re-run" \
+	cmp -s "$tmp/up-home/data/captain.md" <(cat "$tmp/up-current.md"; printf '\nCaptain footnote after the block.\n')
+cp "$tmp/up-home/data/captain.md" "$tmp/up-after.md"
+run_installer "$s"
+check "a re-run after the upgrade is byte-identical" cmp -s "$tmp/up-after.md" "$tmp/up-home/data/captain.md"
+
+# Prose that names the markers without the comment wrapper is not a block.
+s=$(make_sandbox prose "{\"home\": \"$tmp/prose-home\"}" "$tmp/prose-home")
+printf '# Standing orders\n\nNotes: aidev-standing-orders:start and aidev-standing-orders:end wrap the block.\n' >"$tmp/prose-home/data/captain.md"
+cp "$tmp/prose-home/data/captain.md" "$tmp/prose-before.md"
+run_installer "$s"
+check "marker names in prose do not count as a block: the block is appended" \
+	test "$(grep -c '^<!-- aidev-standing-orders:start -->$' "$tmp/prose-home/data/captain.md")" -eq 1
+check "the prose stays byte-identical ahead of the appended block" \
+	bash -c 'head -c "$(wc -c <"$2")" "$1" | cmp -s - "$2"' _ "$tmp/prose-home/data/captain.md" "$tmp/prose-before.md"
+
 # --- content: the seven elements ----------------------------------------------
 
 s=$(make_sandbox content "{\"home\": \"$tmp/content-home\"}" "$tmp/content-home")
@@ -209,6 +238,13 @@ for element in \
 	"dispatch prompt"; do
 	check "orders carry element: $element" has "$orders_flat" "$element"
 done
+
+# The effort note matches what the installer (#21) now places: on Claude Code
+# the effort agents exist, so the old "plugin-only, absent" claim must be gone.
+check "the effort note says the installer registers the effort agents on Claude Code" \
+	has "$orders_flat" "the aiDev installer registers the effort agents"
+check "the effort note no longer calls effort agents plugin-only" \
+	bash -c '! grep -qiE "plugin-registered|absent from a skills-only install" <<<"$1"' _ "$orders_flat"
 
 block_elements=$(sed -n '/aidev-standing-orders:start/,/aidev-standing-orders:end/p' "$orders" | grep -cE '^[0-9]+\. \*\*')
 check "the block is one list of exactly seven elements" test "$block_elements" -eq 7
