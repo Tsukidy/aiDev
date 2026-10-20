@@ -217,11 +217,16 @@ check "the block is one list of exactly seven elements" test "$block_elements" -
 #
 # poteto-mode's Opening a PR playbook prescribes its own PR sections and
 # Conventional Commits titles; the orders settle the conflict without editing
-# the vendored playbook.
+# the vendored playbook: `pr` takes the description, the playbook keeps the
+# title (captain decision).
 
 pr_element=$(sed -n '/^5\. \*\*PR shape/,/^6\. \*\*/p' "$orders" | tr -s '[:space:]' ' ')
-check "the PR-shape element gives pr precedence over the Opening a PR playbook" \
-	has "$pr_element" "\`pr\` governs PR titles and descriptions, and overrides poteto-mode's Opening a PR playbook (\`poteto-mode/playbooks/opening-a-pr.md\`: its section list and Conventional Commits titles) and any other description template"
+check "the PR-shape element gives pr precedence over the Opening a PR playbook's section list" \
+	has "$pr_element" "\`pr\` governs PR descriptions, and overrides the section list of poteto-mode's Opening a PR playbook (\`poteto-mode/playbooks/opening-a-pr.md\`) and any other description template"
+check "the PR-shape element keeps the playbook's Conventional Commits titles" \
+	has "$pr_element" "PR titles follow that playbook's Conventional Commits rule, as does the rest of the playbook"
+check "the PR-shape element does not hand PR titles to pr" \
+	bash -c '! grep -qiF -- "governs PR titles" <<<"$1"' _ "$pr_element"
 check "the PR-shape element makes briefs carry the precedence rule" \
 	has "$pr_element" "A brief for work that ends in a PR carries this rule"
 check "the playbook the precedence names exists in the tree" \

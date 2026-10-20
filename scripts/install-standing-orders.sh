@@ -28,8 +28,9 @@
 #      doctrine (features test-first at the agreed seams, `tdd` for bug fixes;
 #      spec #11 D10)
 #   5. PR shape — pr + make-pr-easy-to-review; `pr` wins over poteto-mode's
-#      Opening a PR playbook for titles and descriptions (#24), settled here
-#      so the vendored playbook stays as upstream wrote it
+#      Opening a PR playbook for PR descriptions, while titles keep the
+#      playbook's Conventional Commits rule (#24, captain decision), settled
+#      here so the vendored playbook stays as upstream wrote it
 #   6. context hygiene — the paragraph rescued from ask-matt, adapted to the fleet
 #   7. retro after landings
 # plus the effort-dispatch note ticket 02 flagged: effort levels ride in the
@@ -127,11 +128,12 @@ cat >>"$target" <<'ORDERS'
 5. **PR shape.** Every PR follows `pr` (smallest visual change, shown before
    and after, merge-danger call) plus `make-pr-easy-to-review` (history
    hygiene); `babysit` is the action half of the review loop. `pr` governs PR
-   titles and descriptions, and overrides poteto-mode's Opening a PR playbook
-   (`poteto-mode/playbooks/opening-a-pr.md`: its section list and
-   Conventional Commits titles) and any other description template; the rest
-   of that playbook still applies. A brief for work that ends in a PR carries
-   this rule, because the crewmate who opens the PR runs poteto-mode.
+   descriptions, and overrides the section list of poteto-mode's Opening a PR
+   playbook (`poteto-mode/playbooks/opening-a-pr.md`) and any other
+   description template. PR titles follow that playbook's Conventional
+   Commits rule, as does the rest of the playbook. A brief for work that ends
+   in a PR carries this rule, because the crewmate who opens the PR runs
+   poteto-mode.
 6. **Context hygiene.** The mate keeps grilling → spec → tickets in one
    unbroken window — no `/clear`, no `/compact`, until the tickets exist.
    Each crewmate starts fresh from its brief; work crosses sessions through

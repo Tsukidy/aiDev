@@ -19,8 +19,9 @@ The mate's behavioral contract for the combined fleet: the declared front door
 shape, context hygiene (the paragraph rescued from the retired `ask-matt`), and
 retro after landings — plus the effort-dispatch note (effort levels ride in the
 dispatch prompt; effort-tiered agent types are plugin-only). The PR-shape
-element makes `pr` govern PR titles and descriptions over poteto-mode's
-Opening a PR playbook, without editing the vendored playbook. Seven elements,
+element makes `pr` govern PR descriptions over poteto-mode's Opening a PR
+playbook, while titles keep its Conventional Commits rule, without editing
+the vendored playbook. Seven elements,
 one marked block (`aidev-standing-orders:start` … `:end`), appended to
 `data/captain.md`.
 
