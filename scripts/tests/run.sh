@@ -9,8 +9,9 @@
 # provenance manifest from #24 (with #26's copy identity and link pinning),
 # NOTICE.md attribution (#26), a node_modules dependency
 # tree that must be skipped, and finally against the repo's real skills/
-# tree), the .gitignore rule that keeps
-# node_modules out of git (in a throwaway repository), and the
+# tree), the .gitignore rules that keep node_modules out of git and admit
+# the root LICENSE (in a throwaway repository), the root LICENSE matching
+# skills/LICENSE-aidev (#29), and the
 # standing-orders installer from ticket #08 (its own harness in
 # test-standing-orders.sh, invoked at the end).
 #
@@ -629,7 +630,8 @@ check "a symlinked node_modules is skipped (exit 0)" test "$status" -eq 0
 #
 # A throwaway repository carrying the real .gitignore: dependency trees under
 # every whitelisted directory stay out of `git status`, and the whitelist
-# still hides everything else.
+# still hides everything else. The root LICENSE (#29) is admitted by name
+# alone: neighbouring names such as LICENSE.md or LICENSES/ stay hidden.
 
 gitrepo="$tmp/gitignore"
 # Ignore the operator's global and system git config (e.g. a core.excludesFile)
@@ -648,9 +650,17 @@ ln -s "$tmp/shared-store" "$gitrepo/skills/beta/scripts/node_modules"
 mkdir -p "$gitrepo/docs"
 printf 'local\n' >"$gitrepo/docs/local.md"
 printf 'local\n' >"$gitrepo/CONTEXT.md"
+mkdir -p "$gitrepo/LICENSES"
+for file in LICENSE LICENSE.md LICENSE-other LICENSES/MIT.txt; do
+	printf 'license\n' >"$gitrepo/$file"
+done
 untracked=$(fixture_git status --porcelain --untracked-files=all | sed 's/^?? //' | LC_ALL=C sort)
-expected=$(printf '%s\n' .gitignore personal-extensions/ext/kept.txt scripts/kept.txt skills/alpha/scripts/kept.txt | LC_ALL=C sort)
-check "git status lists whitelisted files only, never node_modules" test "$untracked" = "$expected"
+expected=$(printf '%s\n' .gitignore LICENSE personal-extensions/ext/kept.txt scripts/kept.txt skills/alpha/scripts/kept.txt | LC_ALL=C sort)
+check "git status lists whitelisted files only (the root LICENSE, not its neighbours), never node_modules" test "$untracked" = "$expected"
+
+# The repository's own work has one MIT license (#29), carried twice: at the
+# root for the repository, and in skills/ beside the other license files.
+check "the root LICENSE is the same text as skills/LICENSE-aidev" cmp -s "$repo/LICENSE" "$real_skills/LICENSE-aidev"
 
 # --- the standing-orders installer seam (ticket #08) -----------------------------
 
