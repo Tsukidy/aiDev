@@ -135,7 +135,15 @@ saveManifest(ctx, m);
 
 // --- files we share: strip our parts; the backup's bytes when that is all it was --------
 
-for (const p of shared) keep(reverseSharedFile(m, p, (part) => targetByName(ctx, part.target).stripHookEntry));
+for (const p of shared) {
+	const before = structuredClone(m.items);
+	try {
+		keep(reverseSharedFile(m, p, (part) => targetByName(ctx, part.target).stripHookEntry));
+	} catch (e) {
+		m.items = before; // nothing was written for this file; keep its records
+		fail(`cannot strip our parts from ${p}: ${e.message}`);
+	}
+}
 saveManifest(ctx, m);
 
 // --- beads databases ----------------------------------------------------------------------
