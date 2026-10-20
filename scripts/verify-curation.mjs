@@ -86,15 +86,20 @@ function report(file, line, message) {
 
 // Dependency directories are local install output, not curated content (e.g.
 // poteto-mode's script bootstrap runs `bun install` into its scripts
-// directory). They are skipped everywhere, so a local install never changes
-// the verdict. .gitignore keeps them out of git the same way.
+// directory). Their files are never walked or checked, at any depth. Matched
+// by name whatever the entry type, so a symlinked node_modules is skipped
+// too; .gitignore keeps them out of git the same way.
 const SKIPPED_DIRS = new Set(['node_modules']);
+
+function isSkipped(entry) {
+	return SKIPPED_DIRS.has(entry.name);
+}
 
 function walk(dir) {
 	const entries = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const p = join(dir, entry.name);
-		if (entry.isDirectory() && SKIPPED_DIRS.has(entry.name)) continue;
+		if (isSkipped(entry)) continue;
 		if (entry.isDirectory()) entries.push(...walk(p));
 		else entries.push(p);
 	}
@@ -268,7 +273,7 @@ function resolveWithin(base, target) {
 // --- pass 1: skill identity + frontmatter ---------------------------------------------
 
 const topDirs = readdirSync(root, { withFileTypes: true })
-	.filter((e) => e.isDirectory() && !SKIPPED_DIRS.has(e.name))
+	.filter((e) => e.isDirectory() && !isSkipped(e))
 	.map((e) => e.name)
 	.sort();
 

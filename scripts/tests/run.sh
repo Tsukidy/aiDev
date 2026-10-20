@@ -293,6 +293,16 @@ run_checker "$tree"
 check "node_modules inside a skill and at the root is skipped (exit 0)" test "$status" -eq 0
 check "the node_modules report starts with ok:" grep -q '^ok:' <<<"$output"
 
+# Package managers can leave node_modules as a symlink to a shared store; it
+# is skipped by name, not read as a file.
+tree="$tmp/node-modules-symlink"
+make_skill alpha
+make_dependency "$tmp/shared-store"
+mkdir -p "$tree/alpha/scripts"
+ln -s "$tmp/shared-store" "$tree/alpha/scripts/node_modules"
+run_checker "$tree"
+check "a symlinked node_modules is skipped (exit 0)" test "$status" -eq 0
+
 # --- .gitignore: node_modules never becomes pushable (#25) -------------------------
 #
 # A throwaway repository carrying the real .gitignore: dependency trees under
@@ -311,6 +321,8 @@ for dir in skills/alpha/scripts scripts personal-extensions/ext; do
 	printf 'kept\n' >"$gitrepo/$dir/kept.txt"
 	printf 'dependency\n' >"$gitrepo/$dir/node_modules/commander/index.js"
 done
+mkdir -p "$gitrepo/skills/beta/scripts"
+ln -s "$tmp/shared-store" "$gitrepo/skills/beta/scripts/node_modules"
 mkdir -p "$gitrepo/docs"
 printf 'local\n' >"$gitrepo/docs/local.md"
 printf 'local\n' >"$gitrepo/CONTEXT.md"
