@@ -18,5 +18,5 @@ import { claudeCodeTarget } from './claude-code-target.mjs';
 
 const FACTORIES = { 'claude-code': claudeCodeTarget };
 
-export const installTargets = (ctx) => [claudeCodeTarget(ctx)];
+export const installTargets = (ctx) => Object.values(FACTORIES).map((make) => make(ctx));
 export const targetByName = (ctx, name) => FACTORIES[name]?.(ctx);

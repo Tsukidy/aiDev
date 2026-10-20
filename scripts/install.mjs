@@ -35,6 +35,7 @@ import {
 	SKILLS_SRC,
 	backupOnce,
 	blockRange,
+	countLines,
 	findOnPath,
 	insideHome,
 	isDir,
@@ -91,9 +92,18 @@ const mateHome = resolveMateHome(ctx);
 if (!mateHome) report.error(`first mate home not found under ${ctx.paseoHome} — launch the first mate once so its home exists (or set PASEO_HOME)`);
 const captain = mateHome && join(mateHome, 'data', 'captain.md');
 const captainText = captain && readText(captain);
+// The orders installers find their blocks by marker name, so a marker name
+// anywhere but on its own marker line would make them misread the file.
 for (const o of ORDERS) {
+	if (captainText === null || captainText === undefined) continue;
 	try {
-		if (captainText !== null && captainText !== undefined) blockRange(captainText, o.block);
+		blockRange(captainText, o.block);
+		for (const marker of markers(o.block)) {
+			const name = marker.slice(5, -4);
+			if (captainText.split(name).length - 1 !== countLines(captainText, marker)) {
+				report.error(`${captain} mentions ${name} outside its marker line — the orders installer would misread it; reword it and re-run`);
+			}
+		}
 	} catch (e) {
 		report.error(`${captain}: ${e.message} — remove the partial block and re-run`);
 	}

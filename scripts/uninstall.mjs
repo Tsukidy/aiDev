@@ -16,29 +16,26 @@
 // created, if empty. Beads databases the setup created are kept unless
 // --purge, which asks on a terminal (or takes --yes) before anything is touched.
 
-import { readFileSync, rmSync, existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import {
 	SKILLS_CLI,
 	findOnPath,
 	insideHome,
-	jsonLike,
 	loadManifest,
 	makeReport,
 	paseoPluginIds,
 	parseFlags,
 	readSkillsLock,
-	readText,
 	removeEmptyDir,
 	resolveContext,
 	run,
 	saveManifest,
 	skillsCli,
-	stripBlock,
-	writeAtomic,
 	reverseOwnedFile,
+	reverseSharedFile,
 } from './lib/aidev-install.mjs';
-import { backupOf, drop, items, partsIn, sharedFile } from './lib/manifest.mjs';
+import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
 import { targetByName } from './lib/targets.mjs';
 
 const report = makeReport('uninstall');
@@ -55,9 +52,8 @@ if (!m) report.die(`no install manifest at ${ctx.manifestPath} — refusing to g
 
 const kept = [];
 const keep = (note) => note && kept.push(note);
-const owned = m.items.filter((i) => i.kind === 'agent' || (i.kind === 'file' && !i.shared));
-const isShared = (i) => (i.kind === 'file' && i.shared) || i.kind === 'hook-entry' || i.kind === 'marked-block';
-const sharedPaths = [...new Set(m.items.filter(isShared).map((i) => i.path))];
+const owned = ownedFiles(m);
+const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
 
 // --- preconditions ---------------------------------------------------------------
@@ -88,7 +84,7 @@ if (flags['dry-run']) {
 		...items(m, 'plugin').map((p) => `paseo plugin remove ${p.id}`),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
-		...sharedPaths.map((p) => `strip our parts from ${p}`),
+		...shared.map((p) => `strip our parts from ${p}`),
 		...dbs.map((d) => (flags.purge ? `purge ${d.path}` : `keep ${d.path} (beads database; --purge removes it)`)),
 		`remove ${ctx.manifestPath} and the directories the install created, if empty`,
 	];
@@ -139,46 +135,7 @@ saveManifest(ctx, m);
 
 // --- files we share: strip our parts; the backup's bytes when that is all it was --------
 
-function reverseShared(path) {
-	const parts = partsIn(m, path);
-	const rec = sharedFile(m, path);
-	const b = backupOf(m, path);
-	const done = () => [...parts, rec, b].filter(Boolean).forEach((i) => drop(m, i));
-	const text = readText(path);
-	if (text === null) {
-		if (b) keep(`${b.path} (backup of ${path}, which was deleted after install)`);
-		return done();
-	}
-	const hookEntries = parts.filter((p) => p.kind === 'hook-entry');
-	let result;
-	try {
-		if (hookEntries.length) {
-			let json = JSON.parse(text);
-			for (const h of hookEntries) json = targetByName(ctx, h.target).stripHookEntry(json, h);
-			result = jsonLike(json, text);
-		} else {
-			result = text;
-			for (const blk of parts.filter((p) => p.kind === 'marked-block').reverse()) result = stripBlock(result, blk.id, blk.before);
-		}
-	} catch (e) {
-		fail(`cannot strip our parts from ${path}: ${e.message}`);
-	}
-	const original = b && existsSync(b.path) ? readFileSync(b.path, 'utf8') : null;
-	const sameAsOriginal =
-		original !== null && (hookEntries.length ? JSON.stringify(JSON.parse(original)) === JSON.stringify(JSON.parse(result)) : original === result);
-	const empty = hookEntries.length ? Object.keys(JSON.parse(result)).length === 0 : result === '';
-	if (sameAsOriginal) {
-		writeAtomic(path, readFileSync(b.path));
-		rmSync(b.path, { force: true });
-	} else if (!b && !rec?.existedBefore && empty) {
-		rmSync(path, { force: true });
-	} else {
-		if (result !== text) writeAtomic(path, result);
-		if (b) keep(`${b.path} (pre-install copy of ${path}, which changed since install; only our parts were removed)`);
-	}
-	done();
-}
-for (const p of sharedPaths) reverseShared(p);
+for (const p of shared) keep(reverseSharedFile(m, p, (part) => targetByName(ctx, part.target).stripHookEntry));
 saveManifest(ctx, m);
 
 // --- beads databases ----------------------------------------------------------------------

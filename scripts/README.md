@@ -95,7 +95,9 @@ What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
 entry in `settings.json` that this install did not add is left in place and
 never removed by uninstall. Shared files that are symlinks (dotfiles) are
-written through, so they stay symlinks.
+written through, so they stay symlinks; an operator agent we replace is put
+back at uninstall exactly as it was, a symlink as that symlink. A hook entry
+the operator deletes after install comes back on the next install run.
 
 ### The exclude list
 

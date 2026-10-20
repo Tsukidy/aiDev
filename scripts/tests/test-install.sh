@@ -208,6 +208,7 @@ JSON
 		printf '# My global rules\n\nAlways answer in English.\n' >"$h/.claude/CLAUDE.md"
 		printf -- '---\nname: my-own-skill\ndescription: operator skill\n---\n' >"$h/.claude/skills/my-own-skill/SKILL.md"
 		printf -- '---\nname: comment-sicko\ndescription: the operator wrote this one\n---\n' >"$h/.claude/agents/comment-sicko.md"
+		chmod 600 "$h/.claude/agents/comment-sicko.md"
 		printf '{\n  "version": 3,\n  "skills": {\n    "someone-else": {\n      "source": "x/y",\n      "sourceType": "github"\n    }\n  }\n}' >"$h/.local/state/skills/.skill-lock.json"
 		printf '# Standing orders\n\nNever push to main.\n' >"$h/$mate_rel/data/captain.md"
 		printf 'existing\n' >"$h/$mate_rel/.beads/config.yaml"
@@ -708,11 +709,16 @@ mv "$h/.claude/settings.json" "$h/dotfiles/settings.json"
 mv "$h/.claude/CLAUDE.md" "$h/dotfiles/CLAUDE.md"
 ln -s ../dotfiles/settings.json "$h/.claude/settings.json"
 ln -s ../dotfiles/CLAUDE.md "$h/.claude/CLAUDE.md"
+# An operator agent of the same name as ours, kept in dotfiles too.
+printf -- '---\nname: poteto-agent\ndescription: dotfiles copy\n---\n' >"$h/dotfiles/poteto-agent.md"
+ln -s ../../dotfiles/poteto-agent.md "$h/.claude/agents/poteto-agent.md"
 before=$(snapshot "$h")
 install_in "$sb"
 check "install through symlinked settings.json and CLAUDE.md exits 0" test $? -eq 0
 check "symlinked settings.json and CLAUDE.md are still symlinks after install" \
 	bash -c 'test -L "$1/settings.json" && test -L "$1/CLAUDE.md"' _ "$h/.claude"
+check "replacing a symlinked operator agent leaves its dotfiles target alone" \
+	grep -qx 'description: dotfiles copy' "$h/dotfiles/poteto-agent.md"
 check "the symlink targets received the hook entry and the block" \
 	bash -c 'grep -qF session-start.sh "$1/settings.json" && grep -qF aidev-pstack-sheet "$1/CLAUDE.md"' _ "$h/dotfiles"
 uninstall_in "$sb" --purge --yes
@@ -732,6 +738,24 @@ sb=$(new_sandbox damaged-captain)
 printf '# Standing orders\n\n<!-- paseo-beads-onboarding:start -->\ncut off\n' >"$sb/home/$mate_rel/data/captain.md"
 refuse_case "a truncated orders block in captain.md" "$sb" full
 check "the damaged-block refusal names captain.md" out_has "$sb" "captain.md"
+sb=$(new_sandbox prose-captain)
+printf '# Standing orders\n\nNote: paseo-beads-onboarding:start is the marker.\n' >"$sb/home/$mate_rel/data/captain.md"
+refuse_case "a marker name in captain.md prose" "$sb" full
+
+# --- a hook entry the operator deleted comes back on re-run ------------------------------
+
+sb=$(new_sandbox hook-readd)
+install_in "$sb"
+node -e '
+	const fs = require("fs");
+	const f = process.argv[1];
+	const s = JSON.parse(fs.readFileSync(f, "utf8"));
+	delete s.hooks;
+	fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
+' "$sb/home/.claude/settings.json"
+install_in "$sb"
+check "a re-run restores a deleted routing hook entry" grep -qF 'session-start.sh' "$sb/home/.claude/settings.json"
+check "the restored entry is still one manifest item" manifest_true "$sb" 'm.items.filter((i) => i.kind === "hook-entry").length === 1'
 
 # --- backups that uninstall keeps survive a reinstall ---------------------------------------
 

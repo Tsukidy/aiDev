@@ -6,12 +6,13 @@
 //   skill         a skill the skills CLI installed for one runtime target (name, agent)
 //   agent         an agent definition file whose whole content is ours (name, sha256)
 //   file          a file whose whole content is ours (sha256), or, with
-//                 `shared: true`, a file we only add parts to
+//                 `shared: true`, a file we only add parts to (format: text | json)
 //   hook-entry    our entry in a shared settings file (target, event, marker)
 //   marked-block  our marked block in a shared text file (id, before: the text
 //                 the install put in front of the block)
 //   plugin        a Paseo plugin we installed (id)
-//   backup        the pre-install copy of a file we modified (of)
+//   backup        the pre-install copy of a file we modified (of), or, with
+//                 `link`, the symlink we replaced
 //   dir           a directory the install created
 //   beads-db      what `bd init` created while installing
 //   skills-lock   the skills CLI's lock (existedBefore)
@@ -46,7 +47,11 @@ export const ownedFile = (m, path) => m.items.find((i) => (i.kind === 'agent' ||
 export const sharedFile = (m, path) => first(m, 'file', (i) => i.shared && i.path === path);
 export const backupOf = (m, path) => first(m, 'backup', (i) => i.of === path);
 // Our parts (hook entries, marked blocks) in one shared file.
-export const partsIn = (m, path) => m.items.filter((i) => (i.kind === 'hook-entry' || i.kind === 'marked-block') && i.path === path);
+const isPart = (i) => i.kind === 'hook-entry' || i.kind === 'marked-block';
+export const partsIn = (m, path) => m.items.filter((i) => isPart(i) && i.path === path);
+// Every file whose whole content is ours, and every file we only add parts to.
+export const ownedFiles = (m) => m.items.filter((i) => i.kind === 'agent' || (i.kind === 'file' && !i.shared));
+export const sharedPaths = (m) => [...new Set(m.items.filter((i) => isPart(i) || (i.kind === 'file' && i.shared)).map((i) => i.path))];
 
 // --- changes ------------------------------------------------------------------------
 
@@ -70,7 +75,7 @@ export const ownedFileItem = ({ kind = 'file', name, path, sha256, existedBefore
 	sha256,
 	existedBefore,
 });
-export const sharedFileItem = (path, existedBefore) => ({ kind: 'file', path, shared: true, existedBefore });
+export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind: 'file', path, shared: true, format, existedBefore });
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
 export const pluginItem = (id, path) => ({ kind: 'plugin', id, path });

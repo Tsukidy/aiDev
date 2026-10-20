@@ -16,16 +16,31 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	readlinkSync,
 	realpathSync,
 	renameSync,
 	rmSync,
 	rmdirSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { add, backupItem, backupOf, drop, items, ownedFile, ownedFileItem, readManifest, serialize, sharedFile, sharedFileItem } from './manifest.mjs';
+import {
+	add,
+	backupItem,
+	backupOf,
+	drop,
+	items,
+	ownedFile,
+	ownedFileItem,
+	partsIn,
+	readManifest,
+	serialize,
+	sharedFile,
+	sharedFileItem,
+} from './manifest.mjs';
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SKILLS_SRC = join(REPO, 'skills');
@@ -217,26 +232,34 @@ export function readText(p) {
 	}
 }
 
-// Replace a file atomically. A symlink is written through (a dotfiles link
-// stays a link), and an existing file keeps its mode (settings.json is 0600)
-// unless a mode is given.
-export function writeAtomic(p, content, mode) {
+// Replace a file atomically. An existing file keeps its mode (settings.json
+// is 0600) unless a mode is given, and the temporary copy is private until
+// that mode is set. With `through`, a symlink is written through, so a
+// dotfiles link stays a link; without it, the path itself is replaced.
+export function writeAtomic(p, content, { mode, through = false } = {}) {
 	let dest = p;
-	try {
-		if (lstatSync(p).isSymbolicLink()) dest = realpathSync(p);
-	} catch {}
+	if (through) {
+		try {
+			if (lstatSync(p).isSymbolicLink()) dest = realpathSync(p);
+		} catch {}
+	}
 	let keep = mode;
 	if (keep === undefined) {
 		try {
 			keep = statSync(dest).mode & 0o7777;
-		} catch {}
+		} catch {
+			keep = 0o666 & ~process.umask();
+		}
 	}
 	mkdirSync(dirname(dest), { recursive: true });
 	const tmp = `${dest}.aidev-tmp`;
-	writeFileSync(tmp, content);
-	if (keep !== undefined) chmodSync(tmp, keep);
+	writeFileSync(tmp, content, { mode: 0o600 });
+	chmodSync(tmp, keep);
 	renameSync(tmp, dest);
 }
+
+// Write a file we only add parts to: through symlinks, keeping its mode.
+export const writeShared = (p, content) => writeAtomic(p, content, { through: true });
 
 export const loadManifest = (ctx) => readManifest(ctx.manifestPath);
 
@@ -254,9 +277,16 @@ export function repoCommit() {
 
 // Copy a pre-existing file aside the first time the install modifies it; a
 // later run must not back up our own changes, and must never overwrite a
-// backup an earlier uninstall kept.
-export function backupOnce(ctx, m, path) {
-	if (!existsSync(path) || backupOf(m, path)) return;
+// backup an earlier uninstall kept. With `keepLink` (a file we replace
+// whole), a symlink is recorded as the link itself, so uninstall puts the
+// link back instead of a copy.
+export function backupOnce(ctx, m, path, { keepLink = false } = {}) {
+	if (!lexists(path) || backupOf(m, path)) return;
+	if (keepLink && lstatSync(path).isSymbolicLink()) {
+		add(m, { ...backupItem(path, path, null), link: readlinkSync(path) });
+		return;
+	}
+	if (!existsSync(path)) return;
 	mkdirSync(ctx.backupsDir, { recursive: true });
 	let n = items(m, 'backup').length + 1;
 	let dest;
@@ -279,15 +309,15 @@ export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, cont
 			if (cur !== want) report.warn(`${path} was modified since install — left as is`);
 			return false;
 		}
-		if (cur !== want) writeAtomic(path, content, mode);
+		if (cur !== want) writeAtomic(path, content, { mode });
 		rec.sha256 = want;
 		return cur !== want;
 	}
 	if (cur !== null) {
-		backupOnce(ctx, m, path);
+		backupOnce(ctx, m, path, { keepLink: true });
 		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
 	}
-	writeAtomic(path, content, mode);
+	writeAtomic(path, content, { mode });
 	add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: cur !== null }));
 	return true;
 }
@@ -301,24 +331,83 @@ export function reverseOwnedFile(m, item) {
 	drop(m, item);
 	if (cur !== null && cur !== item.sha256) {
 		if (b) drop(m, b); // left on disk; the note says where
-		return `${item.path} (modified since install${b ? `; the pre-install original is at ${b.path}` : ''})`;
+		const original = b?.link ? `; it replaced a link to ${b.link}` : b ? `; the pre-install original is at ${b.path}` : '';
+		return `${item.path} (modified since install${original})`;
 	}
 	if (cur !== null) rmSync(item.path, { force: true });
-	if (b) {
-		if (existsSync(b.path)) {
-			writeAtomic(item.path, readFileSync(b.path));
-			rmSync(b.path, { force: true });
-		}
-		drop(m, b);
+	if (b?.link) symlinkSync(b.link, item.path);
+	else if (b && existsSync(b.path)) {
+		writeAtomic(item.path, readFileSync(b.path), { mode: statSync(b.path).mode & 0o7777 });
+		rmSync(b.path, { force: true });
 	}
+	if (b) drop(m, b);
 	return null;
 }
 
 // Record (or refresh) a file we add parts to (settings.json, CLAUDE.md,
-// captain.md): uninstall strips only our parts from it.
-export function noteSharedFile(m, path, existedBefore) {
-	const rec = sharedFile(m, path) ?? add(m, sharedFileItem(path, existedBefore));
+// captain.md) and its format: uninstall strips only our parts from it.
+export function noteSharedFile(m, path, existedBefore, format) {
+	const rec = sharedFile(m, path) ?? add(m, sharedFileItem(path, existedBefore, format));
 	rec.sha256 = fileSha(path);
+}
+
+// How each shared-file format is read, stripped of one of our parts,
+// compared and written back. `stripHook` comes from the runtime target that
+// recorded the hook entry.
+const CODECS = {
+	text: {
+		parse: (t) => t,
+		strip: (v, part) => stripBlock(v, part.id, part.before),
+		same: (a, b) => a === b,
+		empty: (v) => v === '',
+		render: (v) => v,
+	},
+	json: {
+		parse: (t) => JSON.parse(t),
+		strip: (v, part, stripHook) => stripHook(part)(v, part),
+		same: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+		empty: (v) => Object.keys(v).length === 0,
+		render: (v, like) => jsonLike(v, like),
+	},
+};
+
+// Take our parts back out of a shared file. When what is left equals the
+// pre-install backup, the backup's exact bytes come back; when the install
+// created the file and nothing else is in it, it goes. Otherwise only our
+// parts are removed and the backup is kept. Returns a "kept" note, or null.
+export function reverseSharedFile(m, path, stripHook) {
+	const parts = partsIn(m, path);
+	const rec = sharedFile(m, path);
+	const b = backupOf(m, path);
+	for (const i of [...parts, rec, b]) if (i) drop(m, i);
+	const text = readText(path);
+	if (text === null) return b ? `${b.path} (backup of ${path}, which was deleted after install)` : null;
+	const codec = CODECS[rec?.format ?? (parts.some((p) => p.kind === 'hook-entry') ? 'json' : 'text')];
+	let v = codec.parse(text);
+	for (const part of [...parts].reverse()) v = codec.strip(v, part, stripHook);
+	const original = b && existsSync(b.path) ? readFileSync(b.path, 'utf8') : null;
+	if (original !== null && codec.same(codec.parse(original), v)) {
+		writeShared(path, readFileSync(b.path));
+		rmSync(b.path, { force: true });
+		return null;
+	}
+	if (!b && rec && !rec.existedBefore && codec.empty(v)) {
+		rmSync(path, { force: true });
+		return null;
+	}
+	const result = codec.render(v, text);
+	if (result !== text) writeShared(path, result);
+	return b ? `${b.path} (pre-install copy of ${path}, which changed since install; only our parts were removed)` : null;
+}
+
+// How many times `line` stands as a whole line in `text`.
+export function countLines(text, line) {
+	let n = 0;
+	for (let i = text.indexOf(line); i >= 0; i = text.indexOf(line, i + 1)) {
+		const end = i + line.length;
+		if ((i === 0 || text[i - 1] === '\n') && (end === text.length || text[end] === '\n')) n++;
+	}
+	return n;
 }
 
 // --- marked blocks -----------------------------------------------------------------------

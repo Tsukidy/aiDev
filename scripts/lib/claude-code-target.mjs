@@ -4,7 +4,7 @@
 // SessionStart routing hook and its settings entry, the default model sheet,
 // and the CLAUDE.md include.
 
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	REPO,
@@ -20,9 +20,10 @@ import {
 	readText,
 	repoAgents,
 	reverseOwnedFile,
+	reverseSharedFile,
 	skillsCli,
 	upsertBlock,
-	writeAtomic,
+	writeShared,
 } from './aidev-install.mjs';
 import {
 	add,
@@ -33,6 +34,7 @@ import {
 	items,
 	markedBlockItem,
 	ownedFile,
+	partsIn,
 	sharedFile,
 	skillItem,
 	skillsLockItem,
@@ -102,36 +104,26 @@ export function claudeCodeTarget(ctx) {
 		for (const f of hookFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src), mode: f.mode });
 		const text = readText(settings);
 		const json = readJsonObject(settings);
-		if (first(m, 'hook-entry', (i) => i.path === settings)) return;
+		const ours = first(m, 'hook-entry', (i) => i.path === settings);
 		if ((json.hooks?.SessionStart ?? []).some((g) => groupHas(g, hookScript))) {
-			report.say(`${settings} already has a SessionStart entry for ${hookScript}, not added by this install — left as is`);
+			if (!ours) report.say(`${settings} already has a SessionStart entry for ${hookScript}, not added by this install — left as is`);
 			return;
 		}
+		// Absent: add it (again, if the operator deleted ours since install).
 		backupOnce(ctx, m, settings);
 		json.hooks ??= {};
 		json.hooks.SessionStart ??= [];
 		json.hooks.SessionStart.push({ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: shQuote(hookScript) }] });
-		writeAtomic(settings, jsonLike(json, text));
-		add(m, hookEntryItem(NAME, settings, 'SessionStart', hookScript));
-		noteSharedFile(m, settings, sharedFile(m, settings)?.existedBefore ?? text !== null);
+		writeShared(settings, jsonLike(json, text));
+		if (!ours) add(m, hookEntryItem(NAME, settings, 'SessionStart', hookScript));
+		noteSharedFile(m, settings, sharedFile(m, settings)?.existedBefore ?? text !== null, 'json');
 	}
 
+	// The same reversal uninstall uses: settings.json holds only our hook entry.
 	function removeHook(m, report) {
-		const entry = first(m, 'hook-entry', (i) => i.path === settings);
-		if (entry) {
-			const text = readText(settings);
-			const rec = sharedFile(m, settings);
-			drop(m, entry);
-			if (text !== null) {
-				const json = stripHookEntry(JSON.parse(text), entry);
-				if (Object.keys(json).length === 0 && rec && !rec.existedBefore) {
-					rmSync(settings, { force: true }); // the install created it for this entry alone
-					drop(m, rec);
-				} else {
-					writeAtomic(settings, jsonLike(json, text));
-					noteSharedFile(m, settings, rec?.existedBefore ?? true);
-				}
-			}
+		if (partsIn(m, settings).length) {
+			const kept = reverseSharedFile(m, settings, () => stripHookEntry);
+			if (kept) report.say(`kept ${kept}`);
 		}
 		for (const f of hookFiles) {
 			const rec = ownedFile(m, f.dest);
@@ -244,7 +236,7 @@ export function claudeCodeTarget(ctx) {
 			const up = upsertBlock(before, SHEET_BLOCK, `@${sheet}\n`);
 			if (up.text !== before) {
 				backupOnce(ctx, m, claudeMd);
-				writeAtomic(claudeMd, up.text);
+				writeShared(claudeMd, up.text);
 				noteSharedFile(m, claudeMd, sharedFile(m, claudeMd)?.existedBefore ?? before !== null);
 			}
 			if (!ours) add(m, markedBlockItem(claudeMd, SHEET_BLOCK, up.before));
