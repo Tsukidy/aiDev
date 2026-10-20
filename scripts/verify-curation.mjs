@@ -70,10 +70,12 @@
 //       paths anywhere in the tree, in any file type, fences included. A
 //       skills-CLI install has no plugin root; name paths relative to the
 //       skill directory instead.
-//    g. Namespaced skill references (#26): `namespace:name` in the forms that
-//       name a skill unambiguously — bold (`**ns:name**`), followed by the
-//       word "skill", a `/ns:name` slash mention, a `subagent_type` value —
-//       must name a skill (an agent, for subagent_type) in the tree. Bare
+//    g. Namespaced skill references (#26): `namespace:name`, both parts
+//       starting with a letter (one NS_REF grammar, so `16:9` and
+//       `localhost:3000` never match), in the forms that name a skill
+//       unambiguously — bold (`**ns:name**`), followed by the word "skill" or
+//       "skills", a `/ns:name` slash mention, a `subagent_type` value — must
+//       name a skill (an agent, for subagent_type) in the tree. Bare
 //       `ns:name` spans are not checked: they are mostly labels (`file:line`,
 //       `wayfinder:map`, `lint:boundaries`).
 //
@@ -87,18 +89,21 @@
 //    modified file lies inside an adopted path; each upstream path is adopted
 //    once; every upstream skill is either adopted or excluded, so dropping an
 //    adopted entry fails; no excluded skill ships, in any letter case; each
-//    declared copy (a file upstream ships twice) is byte-identical to its
-//    original; and every link into the upstream repository, in any file
+//    declared copy (a file upstream ships twice) is declared once, lies
+//    inside an adopted path, and is byte-identical to its original; and
+//    every link into the upstream repository, in any file
 //    (github.com views and raw.githubusercontent.com), pins the manifest's
 //    sha and, when it points into the upstream skills directory, names an
-//    upstream skill (a renamed skill is linked under its upstream name).
+//    upstream skill (a renamed skill is linked under its upstream name);
+//    sentence punctuation after a bare URL is not part of the link.
 //    Whether the modified list is complete needs the upstream tree, so it is
 //    rebuilt by diffing on each re-sync, not checked here.
 //
 // 5. Attribution (#26). The tree must carry `NOTICE.md` at its top level,
-//    and every skill directory not adopted in the manifest must be named in
-//    it as a code span (`` `name` ``), in the row giving its source and
-//    license.
+//    and every skill directory not adopted in the manifest must be named as
+//    a whole code span (`` `name` ``) in the first cell of a table row under
+//    its `## Sources` heading: the row that gives the skill's source and
+//    license. A mention in another cell, a bullet, or prose does not count.
 
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative, resolve, dirname, basename, isAbsolute } from 'node:path';
@@ -366,6 +371,17 @@ function isKnownSkill(name) {
 	return dirNamesLower.has(name.toLowerCase()) || skillNamesLower.has(name.toLowerCase());
 }
 
+// The one namespaced-name grammar (rule g): `namespace:name`, each part
+// starting with a letter, so ratios (16:9) and host:port pairs never match.
+const NS_PART = '[a-z][a-z0-9-]*';
+const NS_REF = new RegExp(`^(${NS_PART}):(${NS_PART})$`);
+// Prose forms that name a skill unambiguously: bold, or followed by the word
+// "skill"/"skills". Code spans alone are mostly labels (file:line).
+const NS_PROSE_FORMS = [
+	new RegExp(`\\*\\*(${NS_PART}):(${NS_PART})\\*\\*`, 'g'),
+	new RegExp(`(?<![\\w/.:-])\`?(${NS_PART}):(${NS_PART})\`?\\s+skills?\\b`, 'g'),
+];
+
 // A `namespace:name` reference resolves when `name` is in the tree (a skill,
 // or for subagent_type a carried agent). pstack: is banned outright below,
 // so it is not reported twice.
@@ -388,21 +404,13 @@ for (const file of mdFiles) {
 	// (a) slash-command mentions inside code spans; a namespaced one is a
 	// namespaced skill reference (g)
 	for (const span of spans) {
-		const m = span.content.match(/^\/(?:([a-z0-9][a-z0-9-]*):)?([a-z0-9][a-z0-9-]*)$/);
-		if (!m) continue;
-		if (m[1]) {
-			checkNamespaced(file, span.index, m[1], m[2]);
-		} else if (!BUILTIN_SLASH.has(m[2]) && !isKnownSkill(m[2])) {
-			report(file, lineOf(file, span.index), `slash mention "/${m[2]}" does not resolve (expected an existing skill or built-in command; no skill named "${m[2]}" exists)`);
-		}
-	}
-
-	// (g) namespaced skill references in their skill-naming forms: bold
-	// (**ns:name**), or followed by the word "skill" (`ns:name` skill).
-	{
-		const re = /\*\*([a-z0-9][a-z0-9-]*):([a-z0-9][a-z0-9-]*)\*\*|(?<![\w/.:-])`?([a-z0-9][a-z0-9-]*):([a-z0-9][a-z0-9-]*)`?\s+skill\b/g;
-		for (const m of blanked.matchAll(re)) {
-			checkNamespaced(file, m.index, m[1] ?? m[3], m[2] ?? m[4]);
+		if (!span.content.startsWith('/')) continue;
+		const mention = span.content.slice(1);
+		const namespaced = mention.match(NS_REF);
+		if (namespaced) {
+			checkNamespaced(file, span.index, namespaced[1], namespaced[2]);
+		} else if (/^[a-z0-9][a-z0-9-]*$/.test(mention) && !BUILTIN_SLASH.has(mention) && !isKnownSkill(mention)) {
+			report(file, lineOf(file, span.index), `slash mention "/${mention}" does not resolve (expected an existing skill or built-in command; no skill named "${mention}" exists)`);
 		}
 	}
 
@@ -470,7 +478,7 @@ for (const file of mdFiles) {
 			const name = m[1] ?? m[2] ?? m[3];
 			const index = baseIndex + m.index + m[0].indexOf(name);
 			if (PLACEHOLDER.test(name)) continue;
-			const namespaced = name.match(/^([^:]+):(.+)$/);
+			const namespaced = name.match(NS_REF);
 			if (namespaced) {
 				checkNamespaced(file, index, namespaced[1], namespaced[2], (agent) => knownAgentNames.has(agent));
 				continue;
@@ -480,6 +488,12 @@ for (const file of mdFiles) {
 				report(file, lineOf(file, index), `agent reference "subagent_type: ${name}" does not resolve (expected an agents/*.md definition declaring name: ${name}; known agents: ${knownAgentNames.size ? [...knownAgentNames].join(', ') : 'none'})`);
 			}
 		}
+	}
+
+	// (g) namespaced skill references in prose; the slash and subagent_type
+	// forms are checked in (a) and (e) with the same NS_REF grammar.
+	for (const re of NS_PROSE_FORMS) {
+		for (const m of blanked.matchAll(re)) checkNamespaced(file, m.index, m[1], m[2]);
 	}
 }
 
@@ -619,13 +633,29 @@ function checkProvenance() {
 	// Files upstream ships twice (poteto-mode carries its own copy of the
 	// licenses and of comment-sicko.md) are kept as copies, so the layout and
 	// the links into it match upstream; each copy must equal its original.
-	for (const { path, of } of m.copies) {
-		const [copy, original] = [path, of].map((p) => resolveWithin(root, canonical(p)));
+	// Each copy lies inside an adopted path and is declared once; its report
+	// points at the entry's "of" key, on the copies entry's own line.
+	const copies = m.copies.map((x) => ({ path: canonical(x.path), raw: x.path, of: x.of }));
+	once('path', copies.map((x) => x.path), 'copy path');
+	for (const { path, raw, of } of copies) {
+		const failCopy = (message) => fail('of', of, message);
+		const [copy, original] = [path, canonical(of)].map((p) => resolveWithin(root, p));
 		if (![copy, original].every((abs) => abs && statSync(abs).isFile())) {
-			fail('path', path, `copy "${path}" or its original "${of}" does not exist as a file (expected both inside the skills tree)`);
-		} else if (!readFileSync(copy).equals(readFileSync(original))) {
-			fail('path', path, `copy "${path}" differs from its original "${of}" (expected identical bytes; edit both together)`);
+			failCopy(`copy "${raw}" or its original "${of}" does not exist as a file (expected both inside the skills tree)`);
+			continue;
 		}
+		if (!underAdopted(path)) {
+			failCopy(`copy "${raw}" is outside every adopted path (expected a file the snapshot vendored)`);
+			continue;
+		}
+		let same;
+		try {
+			same = readFileSync(copy).equals(readFileSync(original));
+		} catch (err) {
+			failCopy(`copy "${raw}" or its original "${of}" is unreadable (${err.message})`);
+			continue;
+		}
+		if (!same) failCopy(`copy "${raw}" differs from its original "${of}" (expected identical bytes; edit both together)`);
 	}
 
 	// An excluded upstream skill must not ship, under any letter case.
@@ -636,26 +666,28 @@ function checkProvenance() {
 		}
 	}
 
-	// NOTICE links into the upstream repository pin the manifest's sha.
-	const pattern = upstreamRefPattern(m.upstream);
-	if (!pattern) {
-		fail('upstream', m.upstream, `upstream "${m.upstream}" is not a github.com repository URL (expected https://github.com/<owner>/<repo>, so NOTICE links can be checked)`);
-		return m;
-	}
 	// Every link into the upstream repository, in any file, pins the manifest's
 	// sha; a link into the upstream skills directory names an upstream skill,
 	// so a renamed skill is linked under its upstream name.
+	const pattern = upstreamRefPattern(m.upstream);
+	if (!pattern) {
+		fail('upstream', m.upstream, `upstream "${m.upstream}" is not a github.com repository URL (expected https://github.com/<owner>/<repo>, so upstream links can be checked)`);
+		return m;
+	}
+	// Sentence punctuation after a bare URL is not part of it.
+	const trailing = /[.,;:>)\]]+$/;
 	for (const file of files) {
 		for (const match of fileText(file).matchAll(pattern)) {
-			const [link, ref, path] = match;
+			const link = match[0].replace(trailing, '');
+			const path = match[2].replace(trailing, '');
+			const ref = path ? match[1] : match[1].replace(trailing, '');
 			if (ref !== m.sha) {
 				report(file, lineOf(file, match.index), `upstream link "${link}" is not pinned (expected the ${MANIFEST} sha ${m.sha}; actual ${ref})`);
 				continue;
 			}
-			const rel = `${path.replace(/^\//, '')}/`;
-			const skill = rel.startsWith(skillsDir) ? rel.slice(skillsDir.length).split('/')[0] : '';
+			const skill = skillOf(path.replace(/^\//, ''))?.split('/')[0];
 			if (skill && !upstreamSkills.has(skill)) {
-				report(file, lineOf(file, match.index), `upstream link "${link}" names "${skill}", which is not an upstream skill (expected one of upstreamSkills; link a renamed skill under its upstream name)`);
+				report(file, lineOf(file, match.index), `upstream link "${link}" names "${skill}", which is not an upstream skill (expected a name in the manifest's upstreamSkills list; link a renamed skill under its upstream name)`);
 			}
 		}
 	}
@@ -675,11 +707,19 @@ function checkAttribution(manifest) {
 		report(noticeFile, 1, `missing ${NOTICE} (expected the tree's notice naming each skill's source and license)`);
 		return;
 	}
-	const notice = fileText(noticeFile);
+	// A skill is attributed by a code span that is a whole name in the first
+	// cell of a table row under "## Sources": a mention anywhere else (another
+	// cell, a bullet, prose) does not say where the skill came from.
+	const sources = fileText(noticeFile).split('\n## ').find((section) => section.startsWith('Sources'));
+	const attributed = new Set();
+	for (const row of (sources ?? '').split('\n').filter((line) => line.startsWith('|'))) {
+		const firstCell = row.split('|')[1];
+		for (const span of firstCell.matchAll(/`([^`]+)`/g)) attributed.add(span[1]);
+	}
 	const adopted = new Set(manifest.adopted.map((a) => canonical(a.path)));
 	for (const dir of topDirs) {
-		if (!adopted.has(dir) && !notice.includes(`\`${dir}\``)) {
-			report(join(root, dir), 1, `skill "${dir}" is not attributed (expected \`${dir}\` in ${NOTICE} under its source and license, or an adopted entry in ${MANIFEST})`);
+		if (!adopted.has(dir) && !attributed.has(dir)) {
+			report(join(root, dir), 1, `skill "${dir}" is not attributed (expected \`${dir}\` in the first cell of a source row under "## Sources" in ${NOTICE}, or an adopted entry in ${MANIFEST})`);
 		}
 	}
 }

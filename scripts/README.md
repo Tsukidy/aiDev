@@ -6,7 +6,7 @@ is `npx skills add` from this repo, per machine (design of record:
 
 | File | Role |
 | --- | --- |
-| `verify-curation.mjs` | The curation gate (ticket #12): duplicate names, unresolvable references (including `namespace:skill` references to skills not in the tree), frontmatter validity, the `pstack:` and plugin-rooted-path (`<plugin>/…`) bans, the pstack provenance manifest `skills/pstack-provenance.json` (#24: every vendored path declared and present, declared copies identical, every upstream link pinned to its sha), and attribution (#26: every skill not adopted from pstack is named in `skills/NOTICE.md`). Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
+| `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
 | `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below. |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. See below. |
 | `tests/test-standing-orders.sh` | The installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |

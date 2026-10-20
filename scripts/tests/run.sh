@@ -65,7 +65,8 @@ EOF
 make_skill() { # make_skill <name>  ($tree is set by the caller)
 	mkdir -p "$tree/$1"
 	[ -e "$tree/$manifest_name" ] || write_empty_manifest "$tree"
-	printf -- '- `%s`: written for this fixture.\n' "$1" >>"$tree/NOTICE.md"
+	[ -e "$tree/NOTICE.md" ] || printf '# NOTICE\n\n## Sources\n\n| Included work | Upstream |\n| --- | --- |\n' >"$tree/NOTICE.md"
+	printf '| `%s` | written for this fixture |\n' "$1" >>"$tree/NOTICE.md"
 	cat >"$tree/$1/SKILL.md" <<EOF
 ---
 name: $1
@@ -270,9 +271,11 @@ Use the **plugin-dev:skill-development** skill to write it.
 Then the `tools:formatter` skill, and `/tools:linter` after.
 Dispatch with `subagent_type: "tools:helper-agent"`.
 Labels like `wayfinder:map`, `lint:boundaries` and `file:line` are not skills.
+Pair it with the **tools:alpha** and `tools:pruner` skills.
 EOF
 run_checker "$tree"
 check "unresolvable namespace:skill references fail" test "$status" -eq 1
+check "the namespace report names a reference followed by the plural 'skills'" grep -q 'tools:pruner' <<<"$output"
 check "the namespace report names a bold reference" grep -q 'plugin-dev:skill-development' <<<"$output"
 check "the namespace report names a backticked reference followed by 'skill'" grep -q 'tools:formatter' <<<"$output"
 check "the namespace report names a namespaced slash mention" grep -q 'tools:linter' <<<"$output"
@@ -285,9 +288,11 @@ make_skill beta
 cat >>"$tree/alpha/SKILL.md" <<'EOF'
 
 Use the **local:beta** skill, then `/local:beta`.
+Frame it at **16:9** and serve it on **localhost:3000**.
 EOF
 run_checker "$tree"
 check "a namespace:skill reference whose skill is in the tree passes" test "$status" -eq 0
+check "bold ratios and host:port pairs are not namespaced skill references" test "$(grep -c '16:9\|localhost' <<<"$output")" -eq 0
 
 # --- frontmatter -------------------------------------------------------------------------
 
@@ -476,6 +481,28 @@ run_checker "$tree"
 check "a declared copy the tree does not have fails" test "$status" -eq 1
 check "the missing-copy report names the copy" grep -q 'gamma/licenses/NOTICE.md' <<<"$output"
 
+make_provenance_tree "$tmp/provenance-copy-unreadable"
+chmod 000 "$tree/gamma/licenses/NOTICE.md"
+run_checker "$tree"
+chmod 644 "$tree/gamma/licenses/NOTICE.md"
+copy_line=$(grep -n '"of"' "$tree/$manifest_name" | cut -d: -f1)
+check "an unreadable copy is reported, not crashed on" test "$status" -eq 1
+check "the unreadable-copy report has no stack trace" test "$(grep -c '^    at ' <<<"$output")" -eq 0
+check "the copy report points at the copies entry" grep -q "$manifest_name:$copy_line:.*gamma/licenses/NOTICE.md" <<<"$output"
+
+make_provenance_tree "$tmp/provenance-copy-outside"
+cp "$tree/NOTICE-skills.md" "$tree/alpha/NOTICE.md"
+edit_manifest 'm.copies.push({ path: "alpha/NOTICE.md", of: "NOTICE-skills.md" });'
+run_checker "$tree"
+check "a copy outside every adopted path fails" test "$status" -eq 1
+check "the outside-copy report names the copy" grep -q 'alpha/NOTICE.md' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-copy-twice"
+edit_manifest 'm.copies.push({ path: "./gamma/licenses/NOTICE.md", of: "NOTICE-skills.md" });'
+run_checker "$tree"
+check "a copy declared twice fails" test "$status" -eq 1
+check "the copy-twice report says listed twice" grep -q 'copy path.*listed twice' <<<"$output"
+
 # Attribution (#26): every skill directory is either adopted in the manifest
 # (NOTICE-skills.md covers those) or named in the tree's NOTICE.md.
 make_provenance_tree "$tmp/provenance-unattributed"
@@ -485,6 +512,22 @@ run_checker "$tree"
 check "a skill named neither in NOTICE.md nor as adopted fails" test "$status" -eq 1
 check "the attribution report names the skill" grep -q '"alpha".*NOTICE.md' <<<"$output"
 check "adopted skills need no NOTICE.md entry" test "$(grep -c '"gamma"\|"understand"' <<<"$output")" -eq 0
+
+# Only the first cell of a ## Sources table row attributes a skill: a name in
+# another cell, or in prose elsewhere, is not a source row.
+make_provenance_tree "$tmp/provenance-attributed-in-prose"
+sed '/`alpha`/d' "$tree/NOTICE.md" >"$tree/NOTICE.md.new"
+mv "$tree/NOTICE.md.new" "$tree/NOTICE.md"
+cat >>"$tree/NOTICE.md" <<'EOF'
+| `zeta` | copied beside `alpha` |
+
+## Local changes
+
+- `alpha` was changed locally.
+EOF
+run_checker "$tree"
+check "a skill named only outside a source row's first cell fails" test "$status" -eq 1
+check "the prose-only report names the skill" grep -q '"alpha".*NOTICE.md' <<<"$output"
 
 make_provenance_tree "$tmp/provenance-no-notice"
 rm "$tree/NOTICE.md"
@@ -519,8 +562,13 @@ done
 # lives under its upstream name.
 make_provenance_tree "$tmp/provenance-pinned-skill-link"
 printf '\nUpstream copy: https://github.com/example/vendor/blob/1111111111111111111111111111111111111111/skills/teach/SKILL.md\n' >>"$tree/understand/SKILL.md"
+cat >>"$tree/gamma/SKILL.md" <<'EOF'
+
+Upstream lives at https://github.com/example/vendor/tree/1111111111111111111111111111111111111111/skills/gamma.
+Pinned (https://github.com/example/vendor/tree/1111111111111111111111111111111111111111/skills/teach), as is <https://github.com/example/vendor/blob/1111111111111111111111111111111111111111>.
+EOF
 run_checker "$tree"
-check "a pinned link to a skill under its upstream name passes" test "$status" -eq 0
+check "a pinned link to a skill under its upstream name passes, trailing punctuation included" test "$status" -eq 0
 
 make_provenance_tree "$tmp/provenance-unpinned-skill-link"
 printf '\nUpstream copy: https://github.com/example/vendor/blob/main/skills/gamma/SKILL.md\n' >>"$tree/gamma/SKILL.md"
