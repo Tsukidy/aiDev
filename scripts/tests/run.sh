@@ -349,6 +349,29 @@ run_checker "$tree"
 check "a modified path outside every adopted path fails" test "$status" -eq 1
 check "the outside-modified report names the path" grep -q 'alpha/SKILL.md' <<<"$output"
 
+make_provenance_tree "$tmp/provenance-modified-escape"
+edit_manifest 'm.modified.push({ path: "gamma/../alpha/SKILL.md", reason: "edited" });'
+run_checker "$tree"
+check "a modified path that climbs out of its adopted path fails" test "$status" -eq 1
+check "the climbing-path report names the path" grep -q 'gamma/../alpha/SKILL.md' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-spelling"
+edit_manifest 'm.adopted[0].path = "./gamma/";'
+run_checker "$tree"
+check "an adopted path spelled ./gamma/ is the same path as gamma" test "$status" -eq 0
+
+make_provenance_tree "$tmp/provenance-adopted-twice"
+edit_manifest 'm.adopted.push({ path: "alpha", upstream: "skills/gamma" });'
+run_checker "$tree"
+check "one upstream path adopted under two local paths fails" test "$status" -eq 1
+check "the adopted-twice report names the upstream path" grep -q 'skills/gamma' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-bad-field"
+edit_manifest 'm.sha = "1111111";'
+run_checker "$tree"
+check "a malformed manifest field fails" test "$status" -eq 1
+check "the malformed-field report names the field" grep -q 'field "sha"' <<<"$output"
+
 make_provenance_tree "$tmp/provenance-unlisted"
 edit_manifest 'm.adopted = m.adopted.filter((a) => a.path !== "gamma"); m.modified = m.modified.filter((x) => !x.path.startsWith("gamma/"));'
 run_checker "$tree"
@@ -362,6 +385,11 @@ run_checker "$tree"
 check "an excluded upstream skill present in the tree fails" test "$status" -eq 1
 check "the excluded-present report names the directory" grep -q 'dropped' <<<"$output"
 
+make_provenance_tree "$tmp/provenance-excluded-case"
+make_skill Dropped
+run_checker "$tree"
+check "an excluded upstream skill present under another letter case fails" test "$status" -eq 1
+
 make_provenance_tree "$tmp/provenance-no-manifest"
 rm "$tree/$manifest_name"
 run_checker "$tree"
@@ -373,6 +401,17 @@ printf 'See the [log](https://github.com/example/vendor/blob/main/CHANGES.md).\n
 run_checker "$tree"
 check "a NOTICE link to the upstream at a ref other than the pinned sha fails" test "$status" -eq 1
 check "the unpinned-link report names the ref" grep -q 'blob/main' <<<"$output"
+
+for link in \
+	'http://www.github.com/Example/Vendor/blob/main/NOTICE.md' \
+	'https://github.com/example/vendor.git/tree/main' \
+	'https://github.com/example/vendor/commits/main' \
+	'https://raw.githubusercontent.com/example/vendor/main/NOTICE.md'; do
+	make_provenance_tree "$tmp/provenance-unpinned-$(printf '%s' "$link" | tr -c 'a-z0-9' '-')"
+	printf 'See %s.\n' "$link" >>"$tree/NOTICE-skills.md"
+	run_checker "$tree"
+	check "an unpinned NOTICE link fails in any GitHub URL shape: $link" test "$status" -eq 1
+done
 
 # --- dependency trees (#25) ---------------------------------------------------------
 #

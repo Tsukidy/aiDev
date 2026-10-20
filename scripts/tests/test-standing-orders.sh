@@ -220,14 +220,10 @@ check "the block is one list of exactly seven elements" test "$block_elements" -
 # the vendored playbook.
 
 pr_element=$(sed -n '/^5\. \*\*PR shape/,/^6\. \*\*/p' "$orders" | tr -s '[:space:]' ' ')
-check "the PR-shape element says pr governs PR titles and descriptions" \
-	has "$pr_element" '`pr` governs PR titles and descriptions'
-check "the PR-shape element says pr overrides the Opening a PR playbook and any other template" \
-	has "$pr_element" "overrides poteto-mode's Opening a PR playbook"
-check "the PR-shape element covers any other description template" \
-	has "$pr_element" "and any other description template"
-check "the PR-shape element names the playbook file it overrides" \
-	has "$pr_element" '`poteto-mode/playbooks/opening-a-pr.md`'
+check "the PR-shape element gives pr precedence over the Opening a PR playbook" \
+	has "$pr_element" "\`pr\` governs PR titles and descriptions, and overrides poteto-mode's Opening a PR playbook (\`poteto-mode/playbooks/opening-a-pr.md\`: its section list and Conventional Commits titles) and any other description template"
+check "the PR-shape element makes briefs carry the precedence rule" \
+	has "$pr_element" "A brief for work that ends in a PR carries this rule"
 check "the playbook the precedence names exists in the tree" \
 	test -f "$real_skills/poteto-mode/playbooks/opening-a-pr.md"
 

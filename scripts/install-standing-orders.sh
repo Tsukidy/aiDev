@@ -130,7 +130,8 @@ cat >>"$target" <<'ORDERS'
    titles and descriptions, and overrides poteto-mode's Opening a PR playbook
    (`poteto-mode/playbooks/opening-a-pr.md`: its section list and
    Conventional Commits titles) and any other description template; the rest
-   of that playbook still applies.
+   of that playbook still applies. A brief for work that ends in a PR carries
+   this rule, because the crewmate who opens the PR runs poteto-mode.
 6. **Context hygiene.** The mate keeps grilling → spec → tickets in one
    unbroken window — no `/clear`, no `/compact`, until the tickets exist.
    Each crewmate starts fresh from its brief; work crosses sessions through
