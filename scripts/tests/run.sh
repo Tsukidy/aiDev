@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The suite for spec #11's two repo-owned seams: verify-curation.mjs (the
+# The suite for spec #11's repo-owned seams: verify-curation.mjs (the
 # curation gate from ticket #12 — driven against synthetic fixture trees built
 # in a temporary directory, one per rule: duplicates, each unresolvable
 # reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
@@ -13,7 +13,8 @@
 # the root LICENSE (in a throwaway repository), the root LICENSE matching
 # skills/LICENSE-aidev (#29), and the
 # standing-orders installer from ticket #08 (its own harness in
-# test-standing-orders.sh, invoked at the end).
+# test-standing-orders.sh), and the one-command installer and uninstaller
+# from ticket #21 (its own harness in test-install.sh), invoked at the end.
 #
 # Usage: tests/run.sh
 
@@ -673,6 +674,20 @@ else
 	printf '%s\n' "$installer_out"
 	checks=$((checks + 1))
 	printf 'FAIL the standing-orders installer tests pass (exit %s)\n' "$installer_status"
+	failures=$((failures + 1))
+fi
+
+# --- the one-command installer and uninstaller seam (ticket #21) -------------------
+
+if setup_out=$(bash "$here/test-install.sh" 2>&1); then
+	printf '%s\n' "$setup_out"
+	checks=$((checks + 1))
+	printf 'ok   the installer and uninstaller tests pass\n'
+else
+	setup_status=$?
+	printf '%s\n' "$setup_out"
+	checks=$((checks + 1))
+	printf 'FAIL the installer and uninstaller tests pass (exit %s)\n' "$setup_status"
 	failures=$((failures + 1))
 fi
 
