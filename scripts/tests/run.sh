@@ -51,7 +51,8 @@ write_empty_manifest() { # write_empty_manifest <tree>
   "upstreamSkills": [],
   "adopted": [],
   "excluded": [],
-  "modified": []
+  "modified": [],
+  "copies": []
 }
 EOF
 }
@@ -371,10 +372,16 @@ make_provenance_tree() { # make_provenance_tree <tree>
   ],
   "modified": [
     { "path": "gamma/SKILL.md", "reason": "local wording" },
-    { "path": "NOTICE-skills.md", "reason": "links pinned to the sha" }
+    { "path": "NOTICE-skills.md", "reason": "links pinned to the sha" },
+    { "path": "gamma/licenses/NOTICE.md", "reason": "same text as NOTICE-skills.md" }
+  ],
+  "copies": [
+    { "path": "gamma/licenses/NOTICE.md", "of": "NOTICE-skills.md" }
   ]
 }
 EOF
+	mkdir -p "$tree/gamma/licenses"
+	cp "$tree/NOTICE-skills.md" "$tree/gamma/licenses/NOTICE.md"
 }
 
 # Edit the current $tree's manifest with a JavaScript statement over `m`.
@@ -450,6 +457,21 @@ make_provenance_tree "$tmp/provenance-excluded-case"
 make_skill Dropped
 run_checker "$tree"
 check "an excluded upstream skill present under another letter case fails" test "$status" -eq 1
+
+# Upstream ships some files twice (a skill carries its own copy of the
+# licenses); the manifest declares each copy, and the copies stay identical.
+make_provenance_tree "$tmp/provenance-copy-drift"
+printf 'One more line.\n' >>"$tree/gamma/licenses/NOTICE.md"
+run_checker "$tree"
+check "a declared copy that differs from its original fails" test "$status" -eq 1
+check "the copy-drift report names the copy and its original" grep -q 'gamma/licenses/NOTICE.md.*NOTICE-skills.md' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-copy-missing"
+rm "$tree/gamma/licenses/NOTICE.md"
+edit_manifest 'm.modified = m.modified.filter((x) => x.path !== "gamma/licenses/NOTICE.md");'
+run_checker "$tree"
+check "a declared copy the tree does not have fails" test "$status" -eq 1
+check "the missing-copy report names the copy" grep -q 'gamma/licenses/NOTICE.md' <<<"$output"
 
 make_provenance_tree "$tmp/provenance-no-manifest"
 rm "$tree/$manifest_name"

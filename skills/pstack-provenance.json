@@ -1,5 +1,5 @@
 {
-  "about": "Provenance of the vendored pstack-claude snapshot, checked by scripts/verify-curation.mjs. adopted: every path vendored from upstream (path is relative to skills/, upstream is relative to the upstream repository root; a different last segment is a rename). excluded: upstream skills deliberately not carried. modified: every vendored file that differs from upstream at the sha, with the reason. Rebuild the modified list on a re-sync by diffing each adopted path against upstream at the new sha.",
+  "about": "Provenance of the vendored pstack-claude snapshot, checked by scripts/verify-curation.mjs. adopted: every path vendored from upstream (path is relative to skills/, upstream is relative to the upstream repository root; a different last segment is a rename). excluded: upstream skills deliberately not carried. modified: every vendored file that differs from upstream at the sha, with the reason. Rebuild the modified list on a re-sync by diffing each adopted path against upstream at the new sha. copies: files upstream ships twice, kept at both paths so the layout and links match upstream; each copy must stay identical to its original, so edit both together.",
   "upstream": "https://github.com/michael-denyer/pstack-claude",
   "sha": "94f5ce95abe8a9dec976967d79941f631cf477cd",
   "upstreamSkillsDir": "plugins/pstack/skills",
@@ -172,5 +172,12 @@
     {"path": "thermos/agents/thermo-nuclear-review-subagent.md", "reason": "Carried from plugins/pstack/agents: plugin-namespace prefix dropped; \"this plugin\" became \"this skills tree\"."},
     {"path": "understand/SKILL.md", "reason": "Upstream teach, installed as understand because the local tutoring skill owns the name teach: frontmatter name, heading, and self-reference renamed."},
     {"path": "why/SKILL.md", "reason": "Models section says the role defaults are stamped from the upstream models.json, which this tree does not carry. Reasoning-effort paragraph: plugin-namespace prefix dropped from the effort agent types, plus a sentence that those types ship only with the pstack plugin (pass the level in the dispatch prompt); restore upstream wording once #21 installs them."}
+  ],
+  "copies": [
+    {"path": "poteto-mode/references/licenses/LICENSE", "of": "LICENSE"},
+    {"path": "poteto-mode/references/licenses/LICENSE-cursor-team-kit", "of": "LICENSE-cursor-team-kit"},
+    {"path": "poteto-mode/references/licenses/LICENSE-thermos", "of": "LICENSE-thermos"},
+    {"path": "poteto-mode/references/licenses/NOTICE.md", "of": "NOTICE-skills.md"},
+    {"path": "poteto-mode/references/agents/comment-sicko.md", "of": "no-comments/agents/comment-sicko.md"}
   ]
 }

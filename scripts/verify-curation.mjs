@@ -492,6 +492,7 @@ const MANIFEST_FIELDS = [
 	['adopted', listOf((a) => nonEmpty(a.path) && nonEmpty(a.upstream)), 'a list of {path, upstream}'],
 	['excluded', listOf((x) => nonEmpty(x.upstream) && nonEmpty(x.reason)), 'a list of {upstream, reason}'],
 	['modified', listOf((x) => nonEmpty(x.path) && nonEmpty(x.reason)), 'a list of {path, reason}'],
+	['copies', listOf((x) => nonEmpty(x.path) && nonEmpty(x.of)), 'a list of {path, of}'],
 ];
 
 // One canonical spelling per path, so every comparison below is exact:
@@ -592,6 +593,18 @@ function checkProvenance() {
 	for (const name of [...adoptedSkills, ...excludedSkills]) {
 		if (!upstreamSkills.has(name)) {
 			fail('upstream', `${skillsDir}${name}`, `"${name}" is not in upstreamSkills (expected the full upstream skill list at the pinned sha)`);
+		}
+	}
+
+	// Files upstream ships twice (poteto-mode carries its own copy of the
+	// licenses and of comment-sicko.md) are kept as copies, so the layout and
+	// the links into it match upstream; each copy must equal its original.
+	for (const { path, of } of m.copies) {
+		const [copy, original] = [path, of].map((p) => resolveWithin(root, canonical(p)));
+		if (![copy, original].every((abs) => abs && statSync(abs).isFile())) {
+			fail('path', path, `copy "${path}" or its original "${of}" does not exist as a file (expected both inside the skills tree)`);
+		} else if (!readFileSync(copy).equals(readFileSync(original))) {
+			fail('path', path, `copy "${path}" differs from its original "${of}" (expected identical bytes; edit both together)`);
 		}
 	}
 
