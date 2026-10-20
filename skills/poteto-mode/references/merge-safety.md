@@ -4,7 +4,7 @@ Use this reference with [Shipping](../playbooks/shipping.md) and before topology
 
 ## Read both pending mechanisms
 
-Use `ship-pr` under the installed plugin's `skills/poteto-mode/scripts/watch-pr/` directory. It owns GitHub transport, parsing, cancellation order, and readback. The watcher and this command share one `LandingRevision` containing the repository, PR number, head OID, base branch, and base OID.
+Use `ship-pr` in poteto-mode's `scripts/watch-pr/` directory. It owns GitHub transport, parsing, cancellation order, and readback. The watcher and this command share one `LandingRevision` containing the repository, PR number, head OID, base branch, and base OID.
 
 ```sh
 ship-pr inspect --repo "$owner/$repo" --pr "$pr" > "$record_file"

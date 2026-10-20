@@ -437,13 +437,16 @@ for (const file of mdFiles) {
 	}
 }
 
-// (e, cont.) zero pstack:-prefixed references anywhere, any file type.
+// (e, cont.) and (f): forms a skills-CLI install can never resolve, banned
+// anywhere in the tree, in any file type, fences included.
+const FORBIDDEN = [
+	[/pstack:[A-Za-z0-9_-]*/g, (hit) => `forbidden "pstack:"-prefixed reference "${hit}" (expected none anywhere in the tree; rewrite as a bare resolvable name)`],
+	[/(?:<plugin>|\$\{?CLAUDE_PLUGIN_ROOT\}?)[^\s`"')]*/g, (hit) => `plugin-rooted path "${hit}" (expected a path relative to the skill directory; a skills-CLI install has no plugin root)`],
+];
 for (const file of files) {
 	const text = fileText(file);
-	const re = /pstack:[A-Za-z0-9_-]*/g;
-	let m;
-	while ((m = re.exec(text)) !== null) {
-		report(file, lineOf(file, m.index), `forbidden "pstack:"-prefixed reference "${m[0]}" (expected none anywhere in the tree; rewrite as a bare resolvable name)`);
+	for (const [re, message] of FORBIDDEN) {
+		for (const m of text.matchAll(re)) report(file, lineOf(file, m.index), message(m[0]));
 	}
 }
 

@@ -224,6 +224,34 @@ check "a pstack:-prefixed reference in markdown fails" test "$status" -eq 1
 check "the pstack: report names the reference" grep -q 'pstack:poteto-agent' <<<"$output"
 check "a pstack:-prefixed reference in a non-markdown file fails too" test "$(grep -c 'pstack:' <<<"$output")" -ge 2
 
+# --- plugin-rooted paths (#26) -----------------------------------------------------
+#
+# A skills-CLI install has no plugin root, so a path rooted at one never
+# resolves. Paths relative to the skill directory are the installable form.
+
+tree="$tmp/plugin-root"
+make_skill alpha
+cat >>"$tree/alpha/SKILL.md" <<'EOF'
+
+Run `node <plugin>/skills/alpha/scripts/run.mjs` first.
+EOF
+printf 'node "${CLAUDE_PLUGIN_ROOT}/skills/alpha/run.mjs"\n' >"$tree/alpha/run.sh"
+run_checker "$tree"
+check "a <plugin>-rooted path fails" test "$status" -eq 1
+check "the plugin-root report names the path" grep -q '<plugin>/skills/alpha' <<<"$output"
+check "a \${CLAUDE_PLUGIN_ROOT} path in a non-markdown file fails too" grep -q 'alpha/run.sh:1:.*CLAUDE_PLUGIN_ROOT' <<<"$output"
+
+tree="$tmp/plugin-root-fenced"
+make_skill alpha
+cat >>"$tree/alpha/SKILL.md" <<'EOF'
+
+```bash
+node <plugin>/skills/alpha/scripts/run.mjs
+```
+EOF
+run_checker "$tree"
+check "a <plugin>-rooted path inside a fenced command fails too" test "$status" -eq 1
+
 # --- frontmatter -------------------------------------------------------------------------
 
 tree="$tmp/frontmatter-broken"
