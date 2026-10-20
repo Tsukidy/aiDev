@@ -7,11 +7,11 @@
 # empty config value, missing config, corrupt config, legacy location, no home
 # → refusal with no side effects), plus append-once idempotency, preservation
 # of pre-existing orders, the seven elements, the execution doctrine (features
-# test-first at the agreed seams, `tdd` for bug fixes only; spec #11 D10), and
-# the rule that every skill the orders name exists in the repo's final skills/
-# tree. Fully offline: `paseo`
-# and `bd` are failing stubs on PATH, so any attempt to shell out to the daemon
-# or the tracker lands in the stub log and fails the run.
+# test-first at the agreed seams, `tdd` for bug fixes only; spec #11 D10, worded
+# the same as in `implement`), and the rule that every skill the orders name
+# exists in the repo's final skills/ tree. Fully offline: `paseo` and `bd` are
+# failing stubs on PATH, so any attempt to shell out to the daemon or the
+# tracker lands in the stub log and fails the run.
 #
 # Usage: tests/test-standing-orders.sh
 
@@ -53,6 +53,16 @@ check() { # check <description> <command...>
 		printf 'FAIL %s\n' "$description"
 		failures=$((failures + 1))
 	fi
+}
+
+# Content checks match prose that wraps across lines, so they run against one
+# whitespace-collapsed copy of the file.
+flatten() { # flatten <file>
+	tr -s '[:space:]' ' ' <"$1"
+}
+
+has() { # has <flattened-text> <phrase>  (literal, case-insensitive)
+	grep -qiF -- "$2" <<<"$1"
 }
 
 captain_has_one_block() { # captain_has_one_block <file>
@@ -183,6 +193,7 @@ check "the post-block custom text is still present" grep -qF 'Custom captain foo
 s=$(make_sandbox content "{\"home\": \"$tmp/content-home\"}" "$tmp/content-home")
 run_installer "$s"
 orders="$tmp/content-home/data/captain.md"
+orders_flat=$(flatten "$orders")
 for element in \
 	"five-label state machine" \
 	"never through the router's planning playbook" \
@@ -193,25 +204,25 @@ for element in \
 	"smart zone" \
 	"Retro after landings" \
 	"dispatch prompt"; do
-	check "orders carry element: $element" grep -qF "$element" "$orders"
+	check "orders carry element: $element" has "$orders_flat" "$element"
 done
 
 # --- content: the execution doctrine in element 4 (spec #11 D10) --------------
 #
-# Features are built test-first at the agreed seams; `tdd` is named for bug
-# fixes only. The block wraps lines, so match against one whitespace-collapsed
-# copy of it.
+# Features are built test-first at the agreed seams, and `implement` must state
+# the same directive the orders do, so the two cannot drift apart. `tdd` is
+# named once, for bug fixes only.
 
-flat=$(tr -s '[:space:]' ' ' <"$orders")
-has() { grep -qF -- "$1" <<<"$flat"; }
-check "orders build features test-first: the failing test first" has "write the failing test first"
-check "orders put the feature test at the agreed seams" has "at the seams agreed in the spec or brief"
-check "orders allow only the code needed to pass the test" has "then only the code needed to pass it"
-check "orders keep one seam and one test per cycle" has "one seam and one test per cycle"
-check "orders route bug fixes to tdd" has 'Bug fixes use `tdd`'
-check "orders name tdd for bug fixes only" \
-	test "$(grep -oF '`tdd`' <<<"$flat" | wc -l)" -eq "$(grep -oF 'Bug fixes use `tdd`' <<<"$flat" | wc -l)"
-check "orders drop the old tdd-merge wording" bash -c '! grep -qiE "merged[[:space:]]+.?tdd" <<<"$1"' _ "$flat"
+implement_flat=$(flatten "$real_skills/implement/SKILL.md")
+for phrase in \
+	"write the failing test first at the seams agreed in the spec or brief, then only the code needed to pass it" \
+	"one seam and one test per cycle"; do
+	check "orders carry the feature directive: $phrase" has "$orders_flat" "$phrase"
+	check "implement carries the same feature directive: $phrase" has "$implement_flat" "$phrase"
+done
+check "orders route bug fixes to tdd" has "$orders_flat" 'Bug fixes use `/tdd`'
+check "orders name tdd once, for bug fixes only" \
+	test "$(grep -oE '`/?tdd`' <<<"$orders_flat" | wc -l)" -eq 1
 
 # --- every skill the orders name exists in the final tree ----------------------
 #

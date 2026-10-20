@@ -12,7 +12,7 @@ Fetch the ticket or issue (per `docs/agents/issue-tracker.md`, when the repo has
 ## Execute at the seams
 
 - **Feature work**: write the failing test first at the seams agreed in the spec or brief, then only the code needed to pass it. One seam and one test per cycle. If the work needs a seam the brief did not agree, take it back to the dispatcher instead of testing there.
-- **Bug fix**: use /tdd. The bug picks its narrowest executable check, which fails before the fix and passes after it.
+- **Bug fix**: use /tdd. It fixes the bug against the narrowest executable check that fails before the fix and passes after it, and falls back to the closest practical check when no cheap test exists.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 

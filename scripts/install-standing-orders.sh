@@ -119,7 +119,7 @@ cat >>"$target" <<'ORDERS'
    - **Features are built test-first:** write the failing test first at the
      seams agreed in the spec or brief, then only the code needed to pass
      it — one seam and one test per cycle.
-   - **Bug fixes use `tdd`.**
+   - **Bug fixes use `/tdd`.**
    - `/blast-radius` before a risky edit; `/show-me-your-work` on unattended
      runs.
 5. **PR shape.** Every PR follows `pr` (smallest visual change, shown before
