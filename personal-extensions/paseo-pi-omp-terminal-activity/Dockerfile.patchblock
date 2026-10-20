@@ -1,0 +1,20 @@
+# --- BEGIN pi/omp terminal-activity providers --------------------------------
+# Paste into your Paseo image's Dockerfile, after the step that installs
+# @getpaseo/server. Registers pi and omp as Paseo terminal-activity providers
+# so the TUI's status dots, finished notifications, and needs-input attention
+# cover them like the built-in agents.
+#
+# Idempotent on rebuilds (a second application is a no-op) and hard-fails the
+# build with re-derivation instructions if the installed server package's
+# layout has drifted past the verified shape (verified against
+# @getpaseo/server 0.10.2).
+#
+# Adjust PASEO_SERVER_PKG_DIR to where your image installs @getpaseo/server
+# (the directory containing that package's package.json), and make sure the
+# directory below matches where you placed the patch set in the build context.
+ARG PASEO_SERVER_PKG_DIR=/usr/lib/node_modules/@getpaseo/server
+COPY paseo-pi-omp-terminal-activity /tmp/paseo-pi-omp-terminal-activity
+RUN node /tmp/paseo-pi-omp-terminal-activity/paseo-agent-hooks-patch.mjs \
+      "$PASEO_SERVER_PKG_DIR" \
+    && rm -rf /tmp/paseo-pi-omp-terminal-activity
+# --- END pi/omp terminal-activity providers ----------------------------------

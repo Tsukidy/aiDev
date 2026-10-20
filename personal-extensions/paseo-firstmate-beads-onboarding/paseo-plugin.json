@@ -1,0 +1,6 @@
+{
+  "id": "firstmate-beads-onboarding",
+  "requirements": {
+    "paseo": ">=0.11.0"
+  }
+}

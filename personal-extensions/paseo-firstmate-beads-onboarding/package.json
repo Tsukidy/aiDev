@@ -1,0 +1,19 @@
+{
+  "name": "paseo-firstmate-beads-onboarding",
+  "version": "1.0.0",
+  "description": "Paseo daemon plugin: initializes each project's beads memory database at its base checkout on the first workspace.created event. Ships with an installer for the first mate's memory standing orders.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bash tests/run.sh"
+  },
+  "devDependencies": {
+    "@getpaseo/client": "0.11.2",
+    "@getpaseo/plugin": "0.11.2",
+    "@getpaseo/protocol": "0.11.2",
+    "@types/node": "^20.9.0",
+    "typescript": "^5.9.3"
+  }
+}
