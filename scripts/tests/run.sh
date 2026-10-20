@@ -5,8 +5,9 @@
 # in a temporary directory, one per rule: duplicates, each unresolvable
 # reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
 # control showing a carried agent definition satisfies the agent-reference
-# rule, a node_modules dependency tree that must be skipped, and finally
-# against the repo's real skills/ tree), the .gitignore rule that keeps
+# rule, the pstack provenance manifest from #24, a node_modules dependency
+# tree that must be skipped, and finally against the repo's real skills/
+# tree), the .gitignore rule that keeps
 # node_modules out of git (in a throwaway repository), and the
 # standing-orders installer from ticket #08 (its own harness in
 # test-standing-orders.sh, invoked at the end).
@@ -38,10 +39,29 @@ check() { # check <description> <command...>
 	fi
 }
 
+# The provenance manifest every tree must carry (#24). Fixtures that vendor
+# nothing get an empty one: no upstream skills, nothing adopted.
+manifest_name=pstack-provenance.json
+write_empty_manifest() { # write_empty_manifest <tree>
+	cat >"$1/$manifest_name" <<'EOF'
+{
+  "upstream": "https://github.com/example/vendor",
+  "sha": "1111111111111111111111111111111111111111",
+  "upstreamSkillsDir": "skills",
+  "upstreamSkills": [],
+  "adopted": [],
+  "excluded": [],
+  "modified": []
+}
+EOF
+}
+
 # A minimal, fully valid skill in the current $tree fixture: parseable
-# frontmatter with name + description.
+# frontmatter with name + description. The first skill in a fixture also
+# writes the empty manifest.
 make_skill() { # make_skill <name>  ($tree is set by the caller)
 	mkdir -p "$tree/$1"
+	[ -e "$tree/$manifest_name" ] || write_empty_manifest "$tree"
 	cat >"$tree/$1/SKILL.md" <<EOF
 ---
 name: $1
@@ -259,6 +279,100 @@ ln -s "$tmp/does-not-exist-anywhere" "$tree/alpha/notes.md"
 run_checker "$tree"
 check "an unreadable file (dangling symlink) is reported, not crashed on" test "$status" -eq 1
 check "the unreadable-file report names the file" grep -q 'unreadable file' <<<"$output"
+
+# --- the pstack provenance manifest (#24) -----------------------------------------
+#
+# A vendored snapshot: upstream skills gamma (adopted), teach (adopted renamed
+# to understand, because a local skill owns the name teach), and dropped
+# (excluded). The local alpha and teach are not vendored. Each variant below
+# copies this valid tree and breaks one thing.
+
+make_provenance_tree() { # make_provenance_tree <tree>
+	tree=$1
+	make_skill alpha
+	make_skill gamma
+	make_skill teach
+	make_skill understand
+	printf 'Pinned [notice](https://github.com/example/vendor/blob/1111111111111111111111111111111111111111/NOTICE.md).\n' >"$tree/NOTICE-skills.md"
+	cat >"$tree/$manifest_name" <<'EOF'
+{
+  "upstream": "https://github.com/example/vendor",
+  "sha": "1111111111111111111111111111111111111111",
+  "upstreamSkillsDir": "skills",
+  "upstreamSkills": ["dropped", "gamma", "teach"],
+  "adopted": [
+    { "path": "gamma", "upstream": "skills/gamma" },
+    { "path": "understand", "upstream": "skills/teach" },
+    { "path": "NOTICE-skills.md", "upstream": "NOTICE-skills.md" }
+  ],
+  "excluded": [
+    { "upstream": "skills/dropped", "reason": "not wanted here" }
+  ],
+  "modified": [
+    { "path": "gamma/SKILL.md", "reason": "local wording" },
+    { "path": "NOTICE-skills.md", "reason": "links pinned to the sha" }
+  ]
+}
+EOF
+}
+
+# Edit the current $tree's manifest with a JavaScript statement over `m`.
+edit_manifest() { # edit_manifest <js>
+	node -e '
+		const fs = require("fs");
+		const file = process.argv[1];
+		const m = JSON.parse(fs.readFileSync(file, "utf8"));
+		new Function("m", process.argv[2])(m);
+		fs.writeFileSync(file, JSON.stringify(m, null, 2));
+	' "$tree/$manifest_name" "$1"
+}
+
+make_provenance_tree "$tmp/provenance"
+run_checker "$tree"
+check "a manifest covering every vendored path passes, beside a local skill holding a renamed upstream's name" test "$status" -eq 0
+
+make_provenance_tree "$tmp/provenance-missing-adopted"
+edit_manifest 'm.upstreamSkills.push("ghost"); m.adopted.push({ path: "ghost", upstream: "skills/ghost" });'
+run_checker "$tree"
+check "an adopted path the tree does not have fails" test "$status" -eq 1
+check "the missing-adopted report names the path" grep -q '"ghost"' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-missing-modified"
+edit_manifest 'm.modified.push({ path: "gamma/gone.md", reason: "edited" });'
+run_checker "$tree"
+check "a modified path the tree does not have fails" test "$status" -eq 1
+check "the missing-modified report names the path" grep -q 'gamma/gone.md' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-modified-outside"
+edit_manifest 'm.modified.push({ path: "alpha/SKILL.md", reason: "edited" });'
+run_checker "$tree"
+check "a modified path outside every adopted path fails" test "$status" -eq 1
+check "the outside-modified report names the path" grep -q 'alpha/SKILL.md' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-unlisted"
+edit_manifest 'm.adopted = m.adopted.filter((a) => a.path !== "gamma"); m.modified = m.modified.filter((x) => !x.path.startsWith("gamma/"));'
+run_checker "$tree"
+check "an adopted upstream directory missing from the manifest fails" test "$status" -eq 1
+check "the unlisted-directory report names the directory" grep -q 'gamma' <<<"$output"
+check "the unlisted-directory report says it is not listed" grep -q 'not listed as adopted' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-excluded-present"
+make_skill dropped
+run_checker "$tree"
+check "an excluded upstream skill present in the tree fails" test "$status" -eq 1
+check "the excluded-present report names the directory" grep -q 'dropped' <<<"$output"
+
+make_provenance_tree "$tmp/provenance-no-manifest"
+rm "$tree/$manifest_name"
+run_checker "$tree"
+check "a tree without the provenance manifest fails" test "$status" -eq 1
+check "the missing-manifest report names the file" grep -q "$manifest_name" <<<"$output"
+
+make_provenance_tree "$tmp/provenance-unpinned-notice"
+printf 'See the [log](https://github.com/example/vendor/blob/main/CHANGES.md).\n' >>"$tree/NOTICE-skills.md"
+run_checker "$tree"
+check "a NOTICE link to the upstream at a ref other than the pinned sha fails" test "$status" -eq 1
+check "the unpinned-link report names the ref" grep -q 'blob/main' <<<"$output"
 
 # --- dependency trees (#25) ---------------------------------------------------------
 #

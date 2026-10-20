@@ -8,7 +8,8 @@
 # → refusal with no side effects), plus append-once idempotency, preservation
 # of pre-existing orders, the seven elements, the execution doctrine (features
 # test-first at the agreed seams, `tdd` for bug fixes only; spec #11 D10, worded
-# the same as in `implement`), and the rule that every skill the orders name
+# the same as in `implement`), the PR precedence rule (`pr` over poteto-mode's
+# Opening a PR playbook; #24), and the rule that every skill the orders name
 # exists in the repo's final skills/ tree. Fully offline: `paseo` and `bd` are
 # failing stubs on PATH, so any attempt to shell out to the daemon or the
 # tracker lands in the stub log and fails the run.
@@ -147,9 +148,11 @@ check "refusal creates no default home as a side effect" test ! -e "$s/paseo-hom
 
 s=$(make_sandbox idempotent "{\"home\": \"$tmp/idem-home\"}" "$tmp/idem-home")
 run_installer "$s"
+cp "$tmp/idem-home/data/captain.md" "$tmp/idem-first-run.md"
 run_installer "$s"
 check "running twice installs the block exactly once" \
 	test "$(grep -c 'aidev-standing-orders:start' "$tmp/idem-home/data/captain.md")" -eq 1
+check "a re-run leaves captain.md byte-identical" cmp -s "$tmp/idem-first-run.md" "$tmp/idem-home/data/captain.md"
 
 s=$(make_sandbox truncated "{\"home\": \"$tmp/trunc-home\"}" "$tmp/trunc-home")
 run_installer "$s"
@@ -206,6 +209,27 @@ for element in \
 	"dispatch prompt"; do
 	check "orders carry element: $element" has "$orders_flat" "$element"
 done
+
+block_elements=$(sed -n '/aidev-standing-orders:start/,/aidev-standing-orders:end/p' "$orders" | grep -cE '^[0-9]+\. \*\*')
+check "the block is one list of exactly seven elements" test "$block_elements" -eq 7
+
+# --- content: PR precedence in element 5 (#24) ---------------------------------
+#
+# poteto-mode's Opening a PR playbook prescribes its own PR sections and
+# Conventional Commits titles; the orders settle the conflict without editing
+# the vendored playbook.
+
+pr_element=$(sed -n '/^5\. \*\*PR shape/,/^6\. \*\*/p' "$orders" | tr -s '[:space:]' ' ')
+check "the PR-shape element says pr governs PR titles and descriptions" \
+	has "$pr_element" '`pr` governs PR titles and descriptions'
+check "the PR-shape element says pr overrides the Opening a PR playbook and any other template" \
+	has "$pr_element" "overrides poteto-mode's Opening a PR playbook"
+check "the PR-shape element covers any other description template" \
+	has "$pr_element" "and any other description template"
+check "the PR-shape element names the playbook file it overrides" \
+	has "$pr_element" '`poteto-mode/playbooks/opening-a-pr.md`'
+check "the playbook the precedence names exists in the tree" \
+	test -f "$real_skills/poteto-mode/playbooks/opening-a-pr.md"
 
 # --- content: the execution doctrine in element 4 (spec #11 D10) --------------
 #

@@ -64,9 +64,23 @@
 //       skipped. Separately, ZERO `pstack:`-prefixed references are allowed
 //       anywhere in the tree, in any file type — later tickets rewrite them,
 //       and this verifier enforces that invariant from day one.
+//
+// 4. Vendored provenance (#24). The tree must carry `pstack-provenance.json`
+//    at its top level (a file, so rule 1 does not apply to it): the upstream
+//    repository, the pinned commit sha, the full upstream skill list at that
+//    sha, every adopted path with its upstream path (a different last segment
+//    records a rename), the excluded upstream skills with reasons, and every
+//    locally modified vendored file with a reason. Checked: every adopted and
+//    modified path exists, and each modified file lies inside an adopted path;
+//    every upstream skill is either adopted or excluded; a top-level directory
+//    named like an upstream skill is listed as adopted, unless that upstream
+//    skill was adopted under a new name (the local skill owns the name); and
+//    every NOTICE* link into the upstream repository pins the manifest's sha.
+//    Whether the modified list is complete needs the upstream tree, so it is
+//    rebuilt by diffing on each re-sync, not checked here.
 
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
-import { join, relative, resolve, dirname, isAbsolute } from 'node:path';
+import { join, relative, resolve, dirname, basename, isAbsolute } from 'node:path';
 
 const root = resolve(process.argv[2] ?? 'skills');
 
@@ -432,6 +446,134 @@ for (const file of files) {
 	}
 }
 
+// --- pass 3: the pstack provenance manifest (rule 4) ---------------------------------------
+
+const MANIFEST = 'pstack-provenance.json';
+const manifestFile = join(root, MANIFEST);
+const provenance = checkProvenance();
+
+function checkProvenance() {
+	if (!existsSync(manifestFile)) {
+		report(manifestFile, 1, `missing provenance manifest (expected ${MANIFEST} at the top of the skills tree; every vendored path must be declared)`);
+		return null;
+	}
+	const text = fileText(manifestFile);
+	let m;
+	try {
+		m = JSON.parse(text);
+	} catch (err) {
+		report(manifestFile, 1, `unparseable provenance manifest (expected JSON; ${err.message})`);
+		return null;
+	}
+	// The line of a value's first JSON occurrence, for reports that name it.
+	const at = (value) => {
+		const index = text.indexOf(JSON.stringify(value));
+		return index === -1 ? 1 : lineOf(manifestFile, index);
+	};
+	const fail = (value, message) => report(manifestFile, at(value), message);
+
+	const isString = (v) => typeof v === 'string' && v.trim() !== '';
+	const shapeOk =
+		m !== null &&
+		typeof m === 'object' &&
+		isString(m.upstream) &&
+		/^[0-9a-f]{40}$/.test(m.sha ?? '') &&
+		isString(m.upstreamSkillsDir) &&
+		Array.isArray(m.upstreamSkills) &&
+		m.upstreamSkills.every(isString) &&
+		Array.isArray(m.adopted) &&
+		m.adopted.every((a) => a && isString(a.path) && isString(a.upstream)) &&
+		Array.isArray(m.excluded) &&
+		m.excluded.every((x) => x && isString(x.upstream) && isString(x.reason)) &&
+		Array.isArray(m.modified) &&
+		m.modified.every((x) => x && isString(x.path) && isString(x.reason));
+	if (!shapeOk) {
+		report(manifestFile, 1, 'malformed provenance manifest (expected upstream, a 40-hex sha, upstreamSkillsDir, upstreamSkills[name], adopted[{path, upstream}], excluded[{upstream, reason}], modified[{path, reason}])');
+		return null;
+	}
+
+	// Manifest paths are relative to the skills root and must stay inside it.
+	const inTree = (p) => {
+		const abs = resolve(root, p);
+		return isInsideRoot(abs) && existsSync(abs) ? abs : null;
+	};
+	const duplicates = (values) => values.filter((v, i) => values.indexOf(v) !== i);
+
+	for (const dup of duplicates(m.adopted.map((a) => a.path))) {
+		fail(dup, `adopted path "${dup}" is listed twice (expected each adopted path once)`);
+	}
+	for (const dup of duplicates(m.modified.map((x) => x.path))) {
+		fail(dup, `modified path "${dup}" is listed twice (expected each modified file once)`);
+	}
+
+	for (const { path } of m.adopted) {
+		if (!inTree(path)) {
+			fail(path, `adopted path "${path}" does not exist (expected ${join(root, path)} inside the skills tree)`);
+		}
+	}
+
+	const adoptedPaths = m.adopted.map((a) => a.path.replace(/\/+$/, ''));
+	const underAdopted = (p) => adoptedPaths.some((a) => p === a || p.startsWith(`${a}/`));
+	for (const { path } of m.modified) {
+		const abs = inTree(path);
+		if (!abs || !statSync(abs).isFile()) {
+			fail(path, `modified path "${path}" does not exist as a file (expected ${join(root, path)} inside the skills tree)`);
+		} else if (!underAdopted(path)) {
+			fail(path, `modified path "${path}" is outside every adopted path (expected a file the snapshot vendored)`);
+		}
+	}
+
+	// Every upstream skill at the pin is adopted (under its own name or a new
+	// one) or excluded with a reason, never both and never neither.
+	const skillsDir = m.upstreamSkillsDir.replace(/\/+$/, '');
+	const upstreamSkillOf = (upstreamPath) =>
+		upstreamPath.startsWith(`${skillsDir}/`) ? upstreamPath.slice(skillsDir.length + 1).replace(/\/+$/, '') : null;
+	const adoptedAs = new Map(); // upstream skill name -> local path
+	for (const a of m.adopted) {
+		const name = upstreamSkillOf(a.upstream);
+		if (name !== null) adoptedAs.set(name, a.path.replace(/\/+$/, ''));
+	}
+	const excluded = new Set(m.excluded.map((x) => upstreamSkillOf(x.upstream) ?? x.upstream));
+	for (const name of m.upstreamSkills) {
+		if (adoptedAs.has(name) && excluded.has(name)) {
+			fail(name, `upstream skill "${name}" is both adopted and excluded (expected one)`);
+		} else if (!adoptedAs.has(name) && !excluded.has(name)) {
+			fail(name, `upstream skill "${name}" is neither adopted nor excluded (expected an adopted entry or an excluded entry with a reason)`);
+		}
+	}
+	for (const name of [...adoptedAs.keys(), ...excluded]) {
+		if (!m.upstreamSkills.includes(name)) {
+			fail(name, `"${name}" is not in upstreamSkills (expected the full upstream skill list at the pinned sha)`);
+		}
+	}
+
+	// A top-level directory named like an upstream skill is vendored, so it
+	// must be adopted under that name. The exception is an upstream skill
+	// adopted under a new name: the rename exists because a local skill owns
+	// the original name.
+	const localPaths = new Set(adoptedPaths);
+	for (const dir of topDirs) {
+		if (!m.upstreamSkills.includes(dir) || localPaths.has(dir)) continue;
+		if (adoptedAs.has(dir) && adoptedAs.get(dir) !== dir) continue;
+		report(join(root, dir), 1, `upstream skill directory "${dir}" is not listed as adopted in ${MANIFEST} (expected an adopted entry for it, or remove it if it is excluded)`);
+	}
+
+	// NOTICE links into the upstream repository pin the manifest's sha.
+	const upstreamUrl = m.upstream.replace(/\/+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	for (const file of files.filter((f) => /^NOTICE/i.test(basename(f)))) {
+		const re = new RegExp(`${upstreamUrl}/(?:blob|tree|raw)/([^/\\s)]+)`, 'g');
+		const body = fileText(file);
+		let match;
+		while ((match = re.exec(body)) !== null) {
+			if (match[1] !== m.sha) {
+				report(file, lineOf(file, match.index), `upstream link "${match[0]}" is not pinned (expected the ${MANIFEST} sha ${m.sha}; actual ${match[1]})`);
+			}
+		}
+	}
+
+	return m;
+}
+
 // --- report ------------------------------------------------------------------------------
 
 if (violations.length > 0) {
@@ -439,5 +581,5 @@ if (violations.length > 0) {
 	console.log(`\n${violations.length} violation${violations.length === 1 ? '' : 's'} in ${root}`);
 	process.exit(1);
 }
-console.log(`ok: ${root} is a coherent, installable skill set (${topDirs.length} skills, ${mdFiles.length} markdown files)`);
+console.log(`ok: ${root} is a coherent, installable skill set (${topDirs.length} skills, ${mdFiles.length} markdown files; ${MANIFEST}: ${provenance.adopted.length} adopted paths and ${provenance.modified.length} modified files at ${provenance.sha})`);
 process.exit(0);

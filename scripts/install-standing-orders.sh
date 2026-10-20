@@ -27,7 +27,9 @@
 #   4. brief doctrine — agreed seams + acceptance criteria + the execution
 #      doctrine (features test-first at the agreed seams, `tdd` for bug fixes;
 #      spec #11 D10)
-#   5. PR shape — pr + make-pr-easy-to-review
+#   5. PR shape — pr + make-pr-easy-to-review; `pr` wins over poteto-mode's
+#      Opening a PR playbook for titles and descriptions (#24), settled here
+#      so the vendored playbook stays as upstream wrote it
 #   6. context hygiene — the paragraph rescued from ask-matt, adapted to the fleet
 #   7. retro after landings
 # plus the effort-dispatch note ticket 02 flagged: effort levels ride in the
@@ -124,7 +126,11 @@ cat >>"$target" <<'ORDERS'
      runs.
 5. **PR shape.** Every PR follows `pr` (smallest visual change, shown before
    and after, merge-danger call) plus `make-pr-easy-to-review` (history
-   hygiene); `babysit` is the action half of the review loop.
+   hygiene); `babysit` is the action half of the review loop. `pr` governs PR
+   titles and descriptions, and overrides poteto-mode's Opening a PR playbook
+   (`poteto-mode/playbooks/opening-a-pr.md`: its section list and
+   Conventional Commits titles) and any other description template; the rest
+   of that playbook still applies.
 6. **Context hygiene.** The mate keeps grilling → spec → tickets in one
    unbroken window — no `/clear`, no `/compact`, until the tickets exist.
    Each crewmate starts fresh from its brief; work crosses sessions through

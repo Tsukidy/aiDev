@@ -6,7 +6,7 @@ is `npx skills add` from this repo, per machine (design of record:
 
 | File | Role |
 | --- | --- |
-| `verify-curation.mjs` | The curation gate (ticket #12): duplicate names, unresolvable references, frontmatter validity, the `pstack:` ban. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
+| `verify-curation.mjs` | The curation gate (ticket #12): duplicate names, unresolvable references, frontmatter validity, the `pstack:` ban, and the pstack provenance manifest `skills/pstack-provenance.json` (#24: every vendored path declared and present, NOTICE links pinned to its sha). Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
 | `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below. |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. See below. |
 | `tests/test-standing-orders.sh` | The installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
@@ -18,7 +18,9 @@ The mate's behavioral contract for the combined fleet: the declared front door
 (CONTEXT.md/ADRs + beads + AGENTS.md), the review gate, brief doctrine, PR
 shape, context hygiene (the paragraph rescued from the retired `ask-matt`), and
 retro after landings — plus the effort-dispatch note (effort levels ride in the
-dispatch prompt; effort-tiered agent types are plugin-only). Seven elements,
+dispatch prompt; effort-tiered agent types are plugin-only). The PR-shape
+element makes `pr` govern PR titles and descriptions over poteto-mode's
+Opening a PR playbook, without editing the vendored playbook. Seven elements,
 one marked block (`aidev-standing-orders:start` … `:end`), appended to
 `data/captain.md`.
 
