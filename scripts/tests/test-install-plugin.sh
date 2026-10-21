@@ -263,4 +263,14 @@ check "the refusal writes nothing" test "$(snapshot "$sb/home")" = "$snap"
 check "the refusal calls no mutating CLI" no_mutating_calls "$sb"
 check "the registration from the moved copy is left in place" plugin_status_is "$sb" running
 
+# --- uninstall under another XDG_DATA_HOME still takes back what the manifest records -------
+
+sb=$(new_sandbox plugin-xdg-uninstall)
+before=$(snapshot "$sb/home")
+install_in "$sb"
+run_in "$sb" full XDG_DATA_HOME="$sb/home/.local/share-moved" -- "$uninstaller" --purge --yes
+check "uninstall under another XDG_DATA_HOME exits 0" test $? -eq 0
+check "it removes the registration from the recorded copy" plugin_status_is "$sb" ""
+check "it restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
 summary
