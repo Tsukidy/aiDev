@@ -215,10 +215,15 @@ if (flags['dry-run']) {
 // --- execute ------------------------------------------------------------------------
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
-const finish = (code) => {
+// Save the manifest with every directory the install has created so far, so
+// an interrupted run leaves nothing uninstall cannot find.
+const checkpoint = () => {
 	saveManifest(ctx, m); // creates the state directory before it is recorded
 	for (const d of watched) if (isDir(d)) ensure(m, dirItem(d), (i) => i.path === d);
 	saveManifest(ctx, m);
+};
+const finish = (code) => {
+	checkpoint();
 	if (code) report.die('stopped after an error; the manifest records what was done — re-run to converge, or uninstall');
 	report.say(`done; manifest at ${ctx.manifestPath}`);
 	if (report.warnings.length) report.say(`${report.warnings.length} warning(s) above`);
@@ -272,11 +277,11 @@ if (report.errors.length) finish(1);
 // Step 8b: the onboarding plugin.
 report.say(stepLine);
 if (!step.foreign) {
-	// Recorded, and saved, before the daemon is asked: a failed build leaves
-	// the plugin registered.
+	// Recorded, and checkpointed, before the daemon is asked: a failed build
+	// leaves the plugin registered, and the call can be interrupted.
 	const item = record ?? add(m, pluginItem(plugin.id, plugin.path));
 	for (const f of pluginFiles) placeOwnedFile(ctx, m, report, f);
-	saveManifest(ctx, m);
+	checkpoint();
 	if (step.call) {
 		const r = run(ctx, 'paseo', ['plugin', ...step.call]);
 		if (r.status !== 0) {

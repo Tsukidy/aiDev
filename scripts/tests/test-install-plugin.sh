@@ -89,6 +89,18 @@ check "uninstall after a failed plugin build exits 0" test $? -eq 0
 check "uninstall after a failed plugin build leaves no registration" plugin_status_is "$sb" ""
 check "install with a failed plugin build → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
+# --- an install interrupted at the daemon leaves nothing uninstall cannot find --------------
+
+sb=$(new_sandbox plugin-interrupted)
+before=$(snapshot "$sb/home")
+(run_in "$sb" full STUB_FAIL=paseo-interrupt -- "$installer") 2>/dev/null # the shell's "Killed" notice
+check "the interrupted install did not finish" test $? -ne 0
+uninstall_in "$sb" --purge --yes
+check "uninstall after an interrupted install exits 0" test $? -eq 0
+check "uninstall after an interrupted install leaves no registration" plugin_status_is "$sb" ""
+check "an interrupted install → uninstall restores the snapshot, no empty directories left" \
+	test "$(snapshot "$sb/home")" = "$before"
+
 # --- the state the #21 installer left on the operator machine converges on re-run ----------
 #
 # The stub builds the copy where it lies, so the plugin runs only if the new

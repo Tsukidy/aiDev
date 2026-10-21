@@ -3,7 +3,9 @@
 // skill directories and keeps a lock file the way skills@1.7.4 does in copy
 // mode), paseo (a plugin list kept outside the sandbox, in STUB_STATE), bd
 // (`ready` and `init`) and bun. Every call is logged to STUB_LOG as
-// `<name>|<args>|<cwd>`; STUB_FAIL lists `<name>-<command>` calls to fail.
+// `<name>|<args>|<cwd>`; STUB_FAIL lists `<name>-<command>` calls to fail,
+// plus paseo-build (every plugin build fails) and paseo-interrupt (`paseo
+// plugin install` kills its caller once the plugin is registered).
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { isBuiltin } from 'node:module';
 import { join } from 'node:path';
@@ -84,6 +86,12 @@ if (name === 'paseo') {
 		const id = JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id;
 		if (plugins.some((p) => p.id === id)) process.exit(1);
 		plugins.push({ id, path: arg });
+		if (fail.includes('paseo-interrupt')) {
+			// The installer is killed, as by Ctrl-C, once the daemon has
+			// registered the plugin.
+			save();
+			process.kill(process.ppid, 'SIGKILL');
+		}
 		start(plugins.at(-1));
 	} else if (cmd === 'remove') {
 		const i = plugins.findIndex((p) => p.id === arg);
