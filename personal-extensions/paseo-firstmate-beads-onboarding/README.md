@@ -14,9 +14,9 @@ and the memory store simply exists.
 
 | File | Role |
 | --- | --- |
-| `index.server.ts` + `paseo-plugin.json` | **Paseo daemon plugin** (the deterministic half): subscribes to `workspace.created`, dedups per project, resolves the project's base via the Paseo API's project record (`projectRootPath` — never the event's cwd, which for crewmate worktrees is the worktree), and runs `bd ready` → `bd init --quiet` at the base. Nothing else: no commits, no files beyond what `bd init` itself produces (init commits its own scaffolding — that is what carries the agent-facing files into worktrees and clones). Absent `bd`, a failed check, or a failed init each log a warning (`paseo plugin logs firstmate-beads-onboarding`) and leave the project retryable on its next workspace event. |
+| `index.server.ts` + `paseo-plugin.json` | **Paseo daemon plugin** (the deterministic half): subscribes to `workspace.created`, dedups per project, resolves the project's base via the Paseo API's project record (`projectRootPath` — never the event's cwd, which for crewmate worktrees is the worktree), skips a base on the operator's skip list (below), and runs `bd ready` → `bd init --quiet` at the base. Nothing else: no commits, no files beyond what `bd init` itself produces (init commits its own scaffolding — that is what carries the agent-facing files into worktrees and clones). Absent `bd`, a failed check, or a failed init each log a warning (`paseo plugin logs firstmate-beads-onboarding`) and leave the project retryable on its next workspace event. |
 | `install-captain-orders.sh` | **Standing orders** (the behavioral half): appends the marked memory rules block to the mate's `data/captain.md` (never overwritten by the plugin, outranks the charter, read every session) and creates the mate-global memory database in the home (`bd init --quiet --stealth`). Idempotent; resolves the mate's home exactly as firstmate 0.3.4 does (`plugin-data/firstmate/config.json` → `~` expansion → default → legacy `plugins/firstmate/home`) and refuses politely when no home exists. |
-| `tests/run.sh` | Offline verification: 9 handler tests + 2 build checks + 25 installer checks (see below). |
+| `tests/run.sh` | Offline verification: 16 handler tests + 2 build checks + 25 installer checks (see below). |
 
 ## Usage
 
@@ -42,6 +42,37 @@ installer: it leaves that registration alone and never removes it.
 The plugin needs `bd` on the daemon's PATH. The orders take effect at the mate's
 next session start (the charter makes it read `data/captain.md` every session);
 `paseo plugin reload firstmate` restarts it sooner.
+
+## The skip list
+
+Projects the plugin must never initialize go in an operator-owned file:
+`$XDG_CONFIG_HOME/aidev/beads-onboarding-skip` when `XDG_CONFIG_HOME` is an
+absolute path in the daemon's environment, else
+`~/.config/aidev/beads-onboarding-skip` (beside the installer's
+`install-exclude`).
+
+```text
+# one project base per line: an absolute path, or ~/ for the daemon's HOME
+/home/paseo/workspace/ai/aiDev
+~/scratch/no-beads-here   # a comment after a path is fine too
+```
+
+- The plugin reads the list on every `workspace.created` event, before any
+  `bd` call, and compares the **real path** of each entry with the real path of
+  the project's resolved base, so a symlink on either side still matches. A
+  path inside the base, or a longer one, does not.
+- A listed project is skipped with a log line and is never initialized. It is
+  not marked done, so once its line is removed the project's next workspace
+  event onboards it as usual.
+- A missing or empty list skips nothing. An entry that is neither absolute nor
+  `~/` is ignored with a warning. A list that exists but cannot be read (a
+  directory, no permission) initializes nothing: the event logs a warning and
+  the project retries on its next event.
+
+`scripts/install.mjs` adds the aiDev checkout it runs from to the list by
+default, because how aiDev carries beads under its whitelist `.gitignore` is
+not decided yet; `scripts/uninstall.mjs` removes only that line
+(`scripts/README.md` has the details). Every other line is the operator's.
 
 ## The invariant, and the two sharp edges it navigates
 
@@ -87,7 +118,12 @@ the superseded prototype, re-implemented fresh):
   absent-`bd` degradation; failed init degrading **and retrying on the next
   event** (this test caught a real bug during development); failed ready-check
   not attempting init; unknown project id running nothing; and no plugin-owned
-  commits or stray writes.
+  commits or stray writes. The skip list: a listed base is never initialized;
+  matching by real path with a symlink on either side, and a `~/` entry;
+  other entries, a longer path and a commented-out line do not skip; an entry
+  removed later makes the project eligible on its next event; a missing,
+  empty or comments-only list changes nothing; an unreadable list initializes
+  nothing and the project retries.
 - **Build seam** (`tests/build.test.mjs`): the daemon builds the plugin from
   its source wherever it is installed, on every load, and resolves each import
   there, so `index.server.ts` imports only what the host supplies (Node

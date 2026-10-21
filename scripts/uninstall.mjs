@@ -7,6 +7,7 @@
 //
 // No manifest → refuses, nothing touched. Otherwise, in order: the onboarding
 // plugin's registration from the recorded copy (while the copy still exists),
+// then our entry in the beads onboarding skip list,
 // the skills (through the skills CLI, per runtime target), every file whose
 // whole content is ours (each only while it still holds what was installed;
 // an edited one, like a tuned model sheet, is kept and reported; a replaced

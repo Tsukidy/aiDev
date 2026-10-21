@@ -11,9 +11,10 @@ they call, and the offline tests for all of it.
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
 | `lib/onboarding-plugin.mjs` | The beads onboarding plugin step (#33): the copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
+| `lib/onboarding-skip-list.mjs` | That step's skip-list entry (#34): this checkout's root on the plugin's skip list, added before the plugin is registered, removed at uninstall. |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
-| `tests/test-install.sh`, `tests/test-install-plugin.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33). Run directly, or via `tests/run.sh`. |
+| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33), the third its skip-list cases (#34). Run directly, or via `tests/run.sh`. |
 | `tests/lib/install-harness.sh`, `tests/lib/cli-stub.mjs` | Their shared harness (sourced): sandboxes, helpers, and the stub CLIs (`npx`, `paseo`, `bd`, `bun`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
 | `tests/test-standing-orders.sh` | That installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
@@ -79,7 +80,9 @@ checkout staying where it is.
    missing, and text outside the markers is never touched.
 8. **The orders and the plugin**: `install-standing-orders.sh` and the beads
    onboarding `install-captain-orders.sh` (each idempotent on its own; the
-   latter creates the mate's home memory database with `bd init`), then the
+   latter creates the mate's home memory database with `bd init`), then this
+   checkout's root on the plugin's skip list (below), so the plugin never
+   runs `bd init` in this repository, then the
    beads onboarding plugin: the files its `package.json` lists, copied under
    the data directory and installed with `paseo plugin install <copy>`. The
    daemon builds a plugin where it lies, on every load, so the copy must
@@ -125,6 +128,27 @@ anything is written: a `../<skill>/` path from a script into another skill
 `find-transcript.mjs`, so exclude both or neither). A Markdown link into an
 excluded skill only warns. A name that is not a skill warns.
 
+### The beads onboarding skip list
+
+`${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip`, operator-owned:
+the project bases the onboarding plugin never initializes. One absolute or
+`~/` path per line, `#` starts a comment; the plugin reads it on every
+`workspace.created` event and compares real paths, so a symlinked path
+matches. A listed project is skipped with a log line, and becomes eligible
+again on its next workspace event once its line is gone. The full rules are
+in the plugin's README.
+
+By default the install adds this checkout's root (how aiDev carries beads
+under its whitelist `.gitignore` is not decided yet): it creates the file if
+absent, with a two-line comment header, or appends one line to the
+operator's, and records the entry in the manifest before writing it. A list
+that already names this checkout, by any path to it, is the operator's:
+nothing is added and nothing recorded. Our entry, deleted by the operator,
+comes back on the next run. Uninstall removes only our line; the operator's
+lines stay byte for byte, and a list the install created and that holds
+nothing else is deleted. Run the install from the checkout Paseo knows as
+the project: the entry is the root of the checkout the install runs from.
+
 ### Every path written
 
 `<claude>` is `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `<data>` is
@@ -144,6 +168,7 @@ excluded skill only warns. A name that is not a skill warns.
 | `<mate>/data/captain.md` | the `aidev-standing-orders` and `paseo-beads-onboarding` blocks (written by the two orders installers) | both blocks and the headings in front of them removed |
 | `<mate>/.beads`, `.beads.gate.lock`, `.git` | the mate's home memory database, when `bd init` created it during install | kept; `--purge` deletes them |
 | `<data>/paseo-plugins/firstmate-beads-onboarding/` | the plugin source copy, registered in Paseo by `paseo plugin install` | `paseo plugin remove` (only a registration Paseo lists from this copy; a manifest from before #33 that recorded the copy but no plugin is upgraded to record it), then the copy is deleted |
+| `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip` | one line: this checkout's root (the file is created if absent) | our line removed; the file is deleted if the install created it and nothing else is in it |
 | `<data>/licenses/` | NOTICE, provenance manifest, licenses | deleted |
 | `<state>/install-manifest.json` | the manifest | deleted last |
 | `<state>/backups/` | a copy of every pre-existing file the install modified | consumed by uninstall; a backup it cannot restore is kept and reported |
@@ -164,19 +189,23 @@ The npx package cache under `~/.npm` is npm's and is left alone.
 
 ### The manifest
 
-JSON at `<state>/install-manifest.json`: `schemaVersion` (2), `installedAt` (the
+JSON at `<state>/install-manifest.json`: `schemaVersion` (3), `installedAt` (the
 first install), `repoCommit` (the latest install), and `items`, each with a
 `kind` and a `path`: `skill`, `agent`, `file` (with `sha256` at install time;
 `shared: true` for settings.json, CLAUDE.md and captain.md), `hook-entry`,
 `marked-block` (with the text the install put in front of the block),
 `plugin` (with `id` and `buildSha256`, the build the daemon last made of the
-copy), `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
+copy), `skip-entry` (with `entry` and the text put in front of it),
+`backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
 changes nothing leaves it byte-identical. Uninstall with no manifest refuses
 and touches nothing. `lib/manifest.mjs` defines every kind and its fields,
 and its one upgrade, from version 1: a manifest from before #33 whose
 install failed at the daemon records the plugin's copy but no `plugin` item,
 and reading it adds the item, with the copy directory's name as the id
-(both installers name it after the id); the next save writes version 2.
+(both installers name it after the id); the next save writes the current
+version. Version 3 (#34) only adds `skip-entry`, so a version 2 is read as
+is; an older checkout's uninstall refuses a version 3 rather than leave our
+skip-list entry behind.
 
 ### The orders block upgrade story
 
@@ -248,5 +277,6 @@ node scripts/verify-curation.mjs             # the curation gate alone
 bash scripts/tests/test-standing-orders.sh   # the orders installer alone
 bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alone
 bash scripts/tests/test-install-plugin.sh    # their onboarding plugin step alone
+bash scripts/tests/test-install-skip-list.sh # its skip-list entry alone
 node --test scripts/tests/onboarding-plugin.test.mjs   # the plugin step's decision table
 ```

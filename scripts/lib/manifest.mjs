@@ -15,6 +15,9 @@
 //                 upgradeUnrecordedPlugin for manifests from before #33);
 //                 buildSha256 hashes the copy's build inputs as of the
 //                 daemon's last successful install or reload of it
+//   skip-entry    our line (entry) in the operator's beads onboarding skip
+//                 list (path), written after it is recorded; before: what
+//                 the install put in front of it (#34)
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created
@@ -27,9 +30,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
 // 2 since #33: a version-1 manifest is upgraded once on read (below) and
-// saved as version 2 by whichever run writes it next.
-export const SCHEMA_VERSION = 2;
-export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'backup', 'dir', 'beads-db', 'skills-lock'];
+// saved as the current version by whichever run writes it next. 3 since #34,
+// which added skip-entry: a version 2 needs no upgrade, and an older
+// checkout's uninstall refuses a version 3 instead of leaving our entry.
+export const SCHEMA_VERSION = 3;
+export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'skip-entry', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {
 	return { schemaVersion: SCHEMA_VERSION, installedAt: new Date().toISOString(), repoCommit, items: [] };
@@ -38,7 +43,7 @@ export function newManifest(repoCommit) {
 export function readManifest(path) {
 	if (!existsSync(path)) return null;
 	const m = JSON.parse(readFileSync(path, 'utf8'));
-	if (![1, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
+	if (![1, 2, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
 		throw new Error(`unsupported manifest at ${path} (schemaVersion ${m.schemaVersion})`);
 	}
 	if (m.schemaVersion === 1) upgradeUnrecordedPlugin(m);
@@ -107,7 +112,8 @@ export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind:
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
 export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
-export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
+export const skipEntryItem = (path, entry, existedBefore, before) => ({ kind: 'skip-entry', path, entry, existedBefore, before });
+export const backupItem =(of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
 export const dirItem = (path) => ({ kind: 'dir', path });
 export const beadsDbItem = (path) => ({ kind: 'beads-db', path });
 export const skillsLockItem = (path, existedBefore) => ({ kind: 'skills-lock', path, existedBefore });

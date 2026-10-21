@@ -107,6 +107,7 @@ export function resolveContext(env) {
 	}
 	const dataDir = join(xdg(env, 'XDG_DATA_HOME', home, '.local/share'), 'aidev');
 	const stateDir = join(xdg(env, 'XDG_STATE_HOME', home, '.local/state'), 'aidev');
+	const configDir = join(xdg(env, 'XDG_CONFIG_HOME', home, '.config'), 'aidev');
 	return {
 		env,
 		home,
@@ -115,7 +116,10 @@ export function resolveContext(env) {
 		stateDir,
 		manifestPath: join(stateDir, 'install-manifest.json'),
 		backupsDir: join(stateDir, 'backups'),
-		excludeFile: join(xdg(env, 'XDG_CONFIG_HOME', home, '.config'), 'aidev', 'install-exclude'),
+		excludeFile: join(configDir, 'install-exclude'),
+		// The beads onboarding plugin's skip list (#34): operator-owned; the
+		// install adds one entry to it. The plugin resolves the same path.
+		skipListFile: join(configDir, 'beads-onboarding-skip'),
 		licensesDir: join(dataDir, 'licenses'),
 		paseoHome: env.PASEO_HOME || join(home, '.paseo'),
 		// Where the skills CLI keeps its global lock (skill-lock.ts
