@@ -4,11 +4,12 @@
 // mode), paseo (a plugin list kept outside the sandbox, in STUB_STATE), bd
 // (`ready` and `init`) and bun. Every call is logged to STUB_LOG as
 // `<name>|<args>|<cwd>`; STUB_FAIL lists `<name>-<command>` calls to fail,
-// plus paseo-build (every plugin build fails) and paseo-interrupt (`paseo
-// plugin install` kills its caller once the plugin is registered).
+// plus paseo-build (every plugin build fails) and paseo-interrupt (a plugin
+// install or reload kills its caller once the daemon has built the plugin and
+// saved its status). The build applies the plugin's own host-supplied rule.
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { isBuiltin } from 'node:module';
 import { join } from 'node:path';
+import { hostSupplied, imports } from '../../../personal-extensions/paseo-firstmate-beads-onboarding/tests/host-supplied.mjs';
 
 const [name, ...args] = process.argv.slice(2);
 appendFileSync(process.env.STUB_LOG, `${name}|${args.join(' ')}|${process.cwd()}\n`);
@@ -70,14 +71,11 @@ if (name === 'paseo') {
 	const [group, cmd, arg] = args;
 	if (group !== 'plugin') process.exit(64);
 	if (fail.includes(`paseo-${cmd}`)) process.exit(1);
-	const builds = (dir) => {
-		const source = readFileSync(join(dir, 'index.server.ts'), 'utf8');
-		const specifiers = [...source.matchAll(/^\s*(?:import|export)\s+(?:[^"';]*?\s+from\s+)?["']([^"']+)["']/gm)].map((m) => m[1]);
-		return !fail.includes('paseo-build') && specifiers.every((s) => isBuiltin(s) || s === '@getpaseo/plugin/server');
-	};
+	const builds = (dir) => !fail.includes('paseo-build') && imports(readFileSync(join(dir, 'index.server.ts'), 'utf8')).every(hostSupplied);
 	const start = (p) => {
 		p.status = builds(p.path) ? 'running' : 'failed';
 		save();
+		if (fail.includes('paseo-interrupt')) process.kill(process.ppid, 'SIGKILL'); // the installer, as by Ctrl-C, once the daemon is done
 		if (p.status === 'failed') process.exit(1);
 	};
 	if (cmd === 'ls') {
@@ -86,12 +84,6 @@ if (name === 'paseo') {
 		const id = JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id;
 		if (plugins.some((p) => p.id === id)) process.exit(1);
 		plugins.push({ id, path: arg });
-		if (fail.includes('paseo-interrupt')) {
-			// The installer is killed, as by Ctrl-C, once the daemon has
-			// registered the plugin.
-			save();
-			process.kill(process.ppid, 'SIGKILL');
-		}
 		start(plugins.at(-1));
 	} else if (cmd === 'remove') {
 		const i = plugins.findIndex((p) => p.id === arg);

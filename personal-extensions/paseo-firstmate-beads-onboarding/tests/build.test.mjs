@@ -7,23 +7,15 @@
 // them, with Paseo's own compiler.
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { isBuiltin } from "node:module";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { hostSupplied, imports } from "./host-supplied.mjs";
 
 const pluginDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const files = JSON.parse(readFileSync(join(pluginDir, "package.json"), "utf8")).files;
-
-// Every module specifier a source file imports or re-exports.
-const imports = (text) => [
-	...[...text.matchAll(/^\s*(?:import|export)\s+(?:[^"';]*?\s+from\s+)?["']([^"']+)["']/gm)].map((m) => m[1]),
-	...[...text.matchAll(/\b(?:import|require)\s*\(\s*["']([^"']+)["']/g)].map((m) => m[1]),
-];
-
-// What the host supplies: Node's builtins and the server SDK.
-const hostSupplied = (specifier) => isBuiltin(specifier) || specifier === "@getpaseo/plugin/server";
 
 test("index.server.ts imports only what the host supplies", () => {
 	const found = imports(readFileSync(join(pluginDir, "index.server.ts"), "utf8"));
@@ -31,8 +23,10 @@ test("index.server.ts imports only what the host supplies", () => {
 	assert.deepEqual(found.filter((s) => !hostSupplied(s)), []);
 });
 
-// Paseo's plugin compiler beside the `paseo` on PATH (its CLI package's
-// sibling @getpaseo/server), or null when Paseo is not installed.
+// Paseo's plugin compiler, beside the main of the @getpaseo/server that the
+// CLI package of the `paseo` on PATH resolves (nested in it or flat beside
+// it): null without paseo on PATH, an Error when paseo is there but the
+// compiler is not.
 function paseoCompiler() {
 	const bin = (process.env.PATH ?? "")
 		.split(":")
@@ -40,13 +34,21 @@ function paseoCompiler() {
 		.map((d) => join(d, "paseo"))
 		.find((p) => existsSync(p));
 	if (!bin) return null;
-	const cli = dirname(dirname(realpathSync(bin)));
-	return join(dirname(cli), "server", "dist", "server", "server", "plugins", "compiler.js");
+	let pkg = dirname(realpathSync(bin));
+	while (!existsSync(join(pkg, "package.json")) && dirname(pkg) !== pkg) pkg = dirname(pkg);
+	let server;
+	try {
+		server = createRequire(join(pkg, "package.json")).resolve("@getpaseo/server");
+	} catch (e) {
+		return new Error(`paseo is on PATH (${bin}), but @getpaseo/server does not resolve from ${pkg}: ${e.message}`);
+	}
+	const compiler = join(dirname(server), "plugins", "compiler.js");
+	return existsSync(compiler) ? compiler : new Error(`paseo is on PATH (${bin}), but its plugin compiler is not at ${compiler}`);
 }
 const compiler = paseoCompiler();
 
-test("Paseo's compiler builds the installed copy, which has no node_modules", { skip: !compiler && "Paseo is not installed (no paseo on PATH)" }, async () => {
-	assert.ok(existsSync(compiler), `paseo is on PATH, but its plugin compiler is not at ${compiler}`);
+test("Paseo's compiler builds the installed copy, which has no node_modules", { skip: compiler === null && "Paseo is not installed (no paseo on PATH)" }, async () => {
+	if (compiler instanceof Error) throw compiler;
 	const { compilePlugin } = await import(pathToFileURL(compiler).href);
 	const copy = mkdtempSync(join(tmpdir(), "beads-onboarding-build-"));
 	try {
