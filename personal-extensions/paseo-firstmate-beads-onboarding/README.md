@@ -18,23 +18,26 @@ and the memory store simply exists.
 | `install-captain-orders.sh` | **Standing orders** (the behavioral half): appends the marked memory rules block to the mate's `data/captain.md` (never overwritten by the plugin, outranks the charter, read every session) and creates the mate-global memory database in the home (`bd init --quiet --stealth`). Idempotent; resolves the mate's home exactly as firstmate 0.3.4 does (`plugin-data/firstmate/config.json` → `~` expansion → default → legacy `plugins/firstmate/home`) and refuses politely when no home exists. |
 | `tests/run.sh` | Offline verification: 9 handler tests + 2 build checks + 25 installer checks (see below). |
 
-Nothing in this directory is installed by this repo. It is delivered for **you**
-to install on the Paseo daemon machine; agents never write there.
-
 ## Usage
 
 ```sh
-# Once, per machine (order matters: the mate's home must exist, so launch the
-# first mate at least once before installing):
-npm install && npm run typecheck        # verify the plugin source
-paseo plugin install /absolute/path/to/this/directory
+# Once, per machine, from the repository root (launch the first mate at least
+# once first, so its home exists):
+node scripts/install.mjs                # the plugin and the standing orders, among the rest
 paseo plugin ls                         # firstmate-beads-onboarding must be running
-./install-captain-orders.sh             # standing orders + the home memory DB
 
 # Per project — nothing. Add the project to Paseo; the mate's standing order to
 # adopt a project's base as a workspace closes the pre-worktree planning window:
 # its create_workspace fires workspace.created, and the plugin onboards the base.
 ```
+
+`scripts/install.mjs` registers the plugin from a copy of the files
+`package.json` lists, under `~/.local/share/aidev`, runs
+`install-captain-orders.sh`, and records both for `scripts/uninstall.mjs`
+(`scripts/README.md` has the details). A plugin of this id registered any
+other way, such as `paseo plugin install` of this directory, is foreign to the
+installer: it leaves that registration alone and never removes it.
+`npm install && npm run typecheck` typechecks the source against the SDK.
 
 The plugin needs `bd` on the daemon's PATH. The orders take effect at the mate's
 next session start (the charter makes it read `data/captain.md` every session);
@@ -108,11 +111,14 @@ records.
 
 ## Provenance
 
-- Paseo **0.11.2** (`@getpaseo/plugin` / `client` / `protocol` / `server`,
-  pinned in `package.json`): plugin SDK contract (`server.on("workspace.created")`,
-  `PluginServerContext` default-export contribution), the event payload
-  (`{ id, projectId, cwd, name, archivedAt }`), the project record's
-  `projectRootPath`, `paseo plugin install <dir>` and `paseo plugin logs`.
+- Paseo: the SDK devDependencies (`@getpaseo/plugin` / `client` / `protocol`)
+  are pinned at **0.11.2** in `package.json`: the plugin SDK contract
+  (`server.on("workspace.created")`, `PluginServerContext` default-export
+  contribution), the event payload (`{ id, projectId, cwd, name, archivedAt }`),
+  the project record's `projectRootPath`. The daemon's behavior is verified
+  against **0.12.0** (#33): it builds a directory plugin from its source where
+  it lies, on every load; it keeps a plugin whose build failed registered; and
+  `paseo plugin install <dir>`, `reload` and `logs` work as described.
 - firstmate **0.3.4** (`@gpambrozio/paseo-firstmate`): home resolution
   (`server/config.ts`), never-overwritten `data/captain.md` with outranking
   semantics, the charter's read-it-every-session rule.

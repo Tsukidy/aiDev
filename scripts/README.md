@@ -79,16 +79,22 @@ checkout staying where it is.
 8. **The orders and the plugin**: `install-standing-orders.sh` and the beads
    onboarding `install-captain-orders.sh` (each idempotent on its own; the
    latter creates the mate's home memory database with `bd init`), then the
-   beads onboarding plugin, copied under the data directory and installed
-   with `paseo plugin install <copy>`. The daemon builds a plugin where it
-   lies, on every load, so the copy must build on its own: the plugin's
-   source imports only what the host supplies (its own tests guard this,
-   #33). A registration from the copy is ours whether or not the manifest
-   recorded it, because Paseo keeps a plugin whose build failed registered:
-   a re-run reloads ours when it failed or runs from an out-of-date copy, and
-   uninstall removes it. A disabled plugin is left disabled, and one of that
-   id registered from anywhere else is left alone. The dry run prints the
-   daemon call the run will make.
+   beads onboarding plugin: the files its `package.json` lists, copied under
+   the data directory and installed with `paseo plugin install <copy>`. The
+   daemon builds a plugin where it lies, on every load, so the copy must
+   build on its own: the plugin's source imports only what the host supplies,
+   which its own tests guard (#33). The plugin is recorded before the daemon
+   is asked, because Paseo keeps a plugin whose build failed registered; the
+   registration from the recorded copy is ours to reload and to remove at
+   uninstall, and one of that id from anywhere else is left alone. A re-run
+   reloads ours when Paseo reports it `failed`, or when it runs and the
+   copy's build inputs (everything but its README), as the run leaves them,
+   differ from what the daemon last built successfully, which the manifest
+   records. So a failed reload is retried, and a README-only change does not
+   restart the plugin. A disabled plugin is left disabled, and its copy is
+   still refreshed. If the plugin is registered from a copy an earlier
+   install recorded elsewhere (the data directory moved), install refuses:
+   uninstall first. The dry run prints the daemon call the run will make.
 9. **The manifest** (below), plus NOTICE, `pstack-provenance.json` and every
    license file of `skills/`, with the repository's own `LICENSE`, under the
    data directory, so attribution travels with the install.
@@ -161,9 +167,13 @@ first install), `repoCommit` (the latest install), and `items`, each with a
 `kind` and a `path`: `skill`, `agent`, `file` (with `sha256` at install time;
 `shared: true` for settings.json, CLAUDE.md and captain.md), `hook-entry`,
 `marked-block` (with the text the install put in front of the block),
-`plugin`, `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
+`plugin` (with `id` and `buildSha256`, the build the daemon last made of the
+copy), `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
 changes nothing leaves it byte-identical. Uninstall with no manifest refuses
-and touches nothing. `lib/manifest.mjs` defines every kind and its fields.
+and touches nothing. `lib/manifest.mjs` defines every kind and its fields,
+and its one upgrade: a manifest from before #33 whose install failed at the
+daemon records the plugin's copy but no `plugin` item, and reading it adds
+the item, with the id the copy's `paseo-plugin.json` declares.
 
 ### The orders block upgrade story
 
