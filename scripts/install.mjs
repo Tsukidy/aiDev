@@ -70,12 +70,13 @@ const report = makeReport('install');
 const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'install');
 const ctx = resolveContext(process.env);
 // The onboarding plugin, registered from a copy under the data directory so
-// the daemon never depends on where this checkout lives. The daemon builds it
-// from these files where the copy lies, on every load; its source imports only
-// what the host supplies, so nothing is installed beside them (#33).
+// the daemon never depends on where this checkout lives. The copy holds the
+// files its package.json lists; the daemon builds it from them where the copy
+// lies, on every load, and its source imports only what the host supplies, so
+// nothing is installed beside them (#33).
 const pluginId = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'paseo-plugin.json'), 'utf8')).id;
 const plugin = { id: pluginId, path: join(ctx.dataDir, 'paseo-plugins', pluginId) };
-const pluginFiles = ['index.server.ts', 'paseo-plugin.json', 'package.json', 'tsconfig.json', 'README.md'].map((f) => ({
+const pluginFiles = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'package.json'), 'utf8')).files.map((f) => ({
 	path: join(plugin.path, f),
 	content: readFileSync(join(ONBOARDING_PLUGIN_DIR, f)),
 }));

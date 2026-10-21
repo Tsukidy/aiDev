@@ -88,10 +88,11 @@ the superseded prototype, re-implemented fresh):
 - **Build seam** (`tests/build.test.mjs`): the daemon builds the plugin from
   its source wherever it is installed, on every load, and resolves each import
   there, so `index.server.ts` imports only what the host supplies (Node
-  builtins, `@getpaseo/plugin/server`, type-only `@getpaseo/protocol/*`) and a
-  copy without `node_modules` builds (#33). Asserted from the imports, and, when
-  Paseo is installed beside `node`, by building a bare copy with Paseo's own
-  compiler.
+  builtins and `@getpaseo/plugin/server`) and a copy without `node_modules`
+  builds (#33). Asserted from the imports, and, wherever `paseo` is on `PATH`,
+  by building a copy of the files `package.json` lists (as the installer
+  copies them) with Paseo's own compiler, found beside that `paseo`; a missing
+  compiler fails the check.
 - **Installer seam** (`tests/installer.test.sh`): synthetic mate homes covering
   every home-resolution branch (absolute, `~`, bare `~`, empty config value,
   missing config, corrupt config → default; legacy location; no home → refusal
