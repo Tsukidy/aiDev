@@ -30,12 +30,6 @@ set_plugin_status() { # set_plugin_status <sb> <status>  — what the stub daemo
 	json_edit "$1/state/paseo-plugins.json" "(list) => { for (const p of list) p.status = '$2'; }"
 }
 
-# The copy holds an older README, as before a repo update that changed only it.
-age_readme() { # age_readme <sb>
-	printf 'an older README\n' >"$(plugin_copy "$1")/README.md"
-	record_as_ours "$1" "$(plugin_copy "$1")/README.md"
-}
-
 # The daemon last built an older version of the plugin, as before a repo
 # update: a build input of the copy holds older content, recorded as ours,
 # and the stored build state is that older build's.
@@ -49,14 +43,19 @@ age_build() { # age_build <sb>
 
 # What the #21 installer left on the operator machine (after an install here):
 # the copy of the pre-#33 source, which imports @getpaseo/client and so does
-# not build where it lies, recorded as ours; the registration failed; no
-# plugin item, in a manifest of schema version 1.
+# not build where it lies, recorded as ours, with the README.md the copy then
+# held; the registration failed; no plugin item, in a manifest of schema
+# version 1.
 pre33_state() { # pre33_state <sb>
 	local f
 	f=$(plugin_copy "$1")/index.server.ts
 	sed 's|^type PaseoApi = PluginHookContext\["paseo"\];$|import type { PaseoApi } from "@getpaseo/client";|' "$plugin_src/index.server.ts" >"$f"
 	grep -q '"@getpaseo/client"' "$f" || { echo "pre33_state: the PaseoApi line moved; update this helper" >&2; return 1; }
 	record_as_ours "$1" "$f"
+	printf 'the README the old copy held\n' >"$(plugin_copy "$1")/README.md"
+	json_edit "$(manifest_of "$1")" "(m) => {
+		m.items.push({ kind: 'file', path: '$(plugin_copy "$1")/README.md', sha256: require('crypto').createHash('sha256').update('the README the old copy held\\n').digest('hex'), existedBefore: false });
+	}"
 	set_plugin_status "$1" failed
 	forget_plugin "$1"
 	json_edit "$(manifest_of "$1")" '(m) => { m.schemaVersion = 1; }'
@@ -119,6 +118,7 @@ check "re-running over an unrecorded failed registration from our copy exits 0" 
 check "the re-run rebuilds it with reload, not a second install" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
 check "the re-run leaves the plugin running" plugin_status_is "$sb" running
 check "the re-run records the plugin in the manifest" plugin_recorded "$sb"
+check "the re-run leaves the README the copy no longer holds to uninstall" test -f "$(plugin_copy "$sb")/README.md"
 uninstall_in "$sb" --purge --yes
 check "uninstall after the converged re-run leaves no registration" plugin_status_is "$sb" ""
 check "uninstall after the converged re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
@@ -188,17 +188,6 @@ install_in "$sb"
 check "the run after a failed reload exits 0" test $? -eq 0
 check "the run after a failed reload retries it" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
 check "the retried plugin is running" plugin_status_is "$sb" running
-
-# --- a change to the copy's README alone does not restart the plugin -------------------------
-
-sb=$(new_sandbox plugin-readme)
-install_in "$sb"
-age_readme "$sb"
-: >"$sb/stub.log"
-install_in "$sb"
-check "re-running over a README-only change exits 0" test $? -eq 0
-check "a README-only change makes no daemon call" test -z "$(plugin_calls "$sb")"
-check "the README is current again" cmp -s "$plugin_src/README.md" "$(plugin_copy "$sb")/README.md"
 
 # --- an operator's edit of the copy reloads the plugin once, not on every run ----------------
 

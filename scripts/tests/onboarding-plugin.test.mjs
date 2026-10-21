@@ -3,8 +3,11 @@
 // line that names it. The sandbox cases of test-install-plugin.sh drive the
 // same step end to end.
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { describeStep, pluginStep, registrationOf } from '../lib/onboarding-plugin.mjs';
+import { describeStep, invalidFileEntries, pluginStep, registrationOf } from '../lib/onboarding-plugin.mjs';
 
 const id = 'firstmate-beads-onboarding';
 const copy = '/home/u/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding';
@@ -49,4 +52,24 @@ test('describeStep names the call, or why there is none', () => {
 		describeStep(step({ id, path: '/elsewhere', status: 'running', ours: false }, true)),
 		`plugin ${id} is registered from /elsewhere, not this installer's copy — left as is`,
 	);
+});
+
+test('invalidFileEntries: only plain names of existing files pass', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'onboarding-files-'));
+	try {
+		writeFileSync(join(dir, 'index.server.ts'), '');
+		mkdirSync(join(dir, 'server'));
+		assert.deepEqual(invalidFileEntries(['index.server.ts'], dir), []);
+		assert.deepEqual(invalidFileEntries(['index.server.ts', '*.ts', 'server', 'server/x.ts', '../x', 'missing.json', 7], dir), [
+			'*.ts',
+			'server',
+			'server/x.ts',
+			'../x',
+			'missing.json',
+			7,
+		]);
+		assert.deepEqual(invalidFileEntries(undefined, dir), ['(no "files" array)']);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

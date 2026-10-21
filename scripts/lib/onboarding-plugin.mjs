@@ -21,7 +21,7 @@
 // package.json lists, nothing installed beside them, and the plugin is recorded
 // before the daemon is asked.
 
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { ONBOARDING_PLUGIN_DIR, findOnPath, ownedFileAction, placeOwnedFile, run, sha256 } from './aidev-install.mjs';
 import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
@@ -72,15 +72,15 @@ export function describeStep(step) {
 	return `plugin ${step.id}: copy to ${step.path}, then ${call ? `paseo plugin ${call(step).join(' ')}` : `no daemon call (Paseo reports it ${step.status})`}`;
 }
 
-// A "files" entry the copy can hold: a plain name of a file in the plugin
-// directory (no path, no glob, no directory).
-function isPlainFile(name) {
-	if (typeof name !== 'string' || name !== basename(name) || name === '.' || name === '..' || /[*?[\]{}!]/.test(name)) return false;
-	try {
-		return statSync(join(ONBOARDING_PLUGIN_DIR, name)).isFile();
-	} catch {
-		return false;
-	}
+// The "files" entries a copy cannot hold: anything but the plain name of a
+// file in dir (a path, a glob, a directory, a missing file).
+export function invalidFileEntries(listed, dir) {
+	if (!Array.isArray(listed)) return ['(no "files" array)'];
+	return listed.filter((name) => {
+		if (typeof name !== 'string' || name !== basename(name) || name === '.' || name === '..' || /[*?[\]{}!]/.test(name)) return true;
+		const p = join(dir, name);
+		return !(existsSync(p) && statSync(p).isFile());
+	});
 }
 
 export function onboardingPlugin(ctx) {
@@ -95,7 +95,7 @@ export function onboardingPlugin(ctx) {
 			id = JSON.parse(readFileSync(source('paseo-plugin.json'), 'utf8')).id;
 			copy = join(ctx.dataDir, 'paseo-plugins', id);
 			const listed = JSON.parse(readFileSync(source('package.json'), 'utf8')).files;
-			const bad = Array.isArray(listed) ? listed.filter((f) => !isPlainFile(f)) : ['(no "files" array)'];
+			const bad = invalidFileEntries(listed, ONBOARDING_PLUGIN_DIR);
 			if (bad.length) report.error(`${source('package.json')} "files" must list plain names of files in ${ONBOARDING_PLUGIN_DIR}: ${bad.join(', ')}`);
 			else files = listed.map((name) => ({ path: join(copy, name), content: readFileSync(source(name)) }));
 			if (findOnPath('paseo', ctx.env)) {
