@@ -19,8 +19,9 @@
 //   6. pstack-models.md, setup-pstack's default, only if absent
 //   7. a marked block in the target's CLAUDE.md including the sheet
 //   8. the standing-orders and beads captain-orders installers (their own
-//      idempotency), and the beads onboarding plugin, registered with Paseo
-//      from a copy (`paseo plugin install`, or `reload` to rebuild ours)
+//      idempotency), this checkout's root on the beads onboarding skip list,
+//      and the beads onboarding plugin, registered with Paseo from a copy
+//      (`paseo plugin install`, or `reload` to rebuild ours)
 //   9. the install manifest under $XDG_STATE_HOME/aidev, with a backup of
 //      every pre-existing file modified; NOTICE and licenses beside the install
 //
@@ -171,7 +172,7 @@ if (flags['dry-run']) {
 		...targets.flatMap((t, i) => t.describe(plans[i])),
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
 		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
-		plugin.describe(pluginPlan),
+		...plugin.describe(pluginPlan),
 		`manifest ${ctx.manifestPath}`,
 	];
 	console.log('install --dry-run: nothing written. The plan:');
