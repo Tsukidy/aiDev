@@ -50,7 +50,7 @@ age_build() { # age_build <sb>
 # What the #21 installer left on the operator machine (after an install here):
 # the copy of the pre-#33 source, which imports @getpaseo/client and so does
 # not build where it lies, recorded as ours; the registration failed; no
-# plugin item.
+# plugin item, in a manifest of schema version 1.
 pre33_state() { # pre33_state <sb>
 	local f
 	f=$(plugin_copy "$1")/index.server.ts
@@ -59,6 +59,7 @@ pre33_state() { # pre33_state <sb>
 	record_as_ours "$1" "$f"
 	set_plugin_status "$1" failed
 	forget_plugin "$1"
+	json_edit "$(manifest_of "$1")" '(m) => { m.schemaVersion = 1; }'
 }
 
 plugin_recorded() { # plugin_recorded <sb>  — the manifest holds our plugin item
@@ -131,6 +132,35 @@ uninstall_in "$sb" --purge --yes
 check "uninstall over an unrecorded failed registration exits 0" test $? -eq 0
 check "uninstall removes the unrecorded registration from our copy" plugin_status_is "$sb" ""
 check "uninstall over an unrecorded failed registration restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
+# ...also when the copy's paseo-plugin.json is gone, or names another id: the
+# upgrade takes the id from the copy directory's name.
+sb=$(new_sandbox plugin-failed-no-manifest-file)
+install_in "$sb"
+pre33_state "$sb"
+rm "$(plugin_copy "$sb")/paseo-plugin.json"
+uninstall_in "$sb" --purge --yes
+check "uninstall over a pre-#33 copy without its paseo-plugin.json exits 0" test $? -eq 0
+check "it removes the unrecorded registration" plugin_status_is "$sb" ""
+sb=$(new_sandbox plugin-failed-edited-id)
+install_in "$sb"
+pre33_state "$sb"
+printf '{"id": "someone-else"}\n' >"$(plugin_copy "$sb")/paseo-plugin.json"
+uninstall_in "$sb" --purge --yes
+check "uninstall over a pre-#33 copy whose paseo-plugin.json names another id exits 0" test $? -eq 0
+check "it still removes our unrecorded registration" plugin_status_is "$sb" ""
+
+# --- the pre-#33 upgrade runs once: an interrupted uninstall does not bring the plugin back --
+
+sb=$(new_sandbox plugin-upgrade-once)
+before=$(snapshot "$sb/home")
+install_in "$sb"
+run_in "$sb" full STUB_FAIL=skills-remove -- "$uninstaller"
+check "an uninstall whose skills removal fails exits nonzero" test $? -ne 0
+check "it removed the plugin's registration first" plugin_status_is "$sb" ""
+run_in "$sb" full STUB_FAIL=paseo-ls -- "$uninstaller" --purge --yes
+check "the next uninstall finishes without the daemon: no plugin record came back" test $? -eq 0
+check "that uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
 # --- a running plugin whose build is out of date is reloaded; the dry run names it ---------
 

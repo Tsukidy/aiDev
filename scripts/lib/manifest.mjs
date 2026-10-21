@@ -26,7 +26,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 1;
+// 2 since #33: a version-1 manifest is upgraded once on read (below) and
+// saved as version 2 by whichever run writes it next.
+export const SCHEMA_VERSION = 2;
 export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {
@@ -36,27 +38,26 @@ export function newManifest(repoCommit) {
 export function readManifest(path) {
 	if (!existsSync(path)) return null;
 	const m = JSON.parse(readFileSync(path, 'utf8'));
-	if (m.schemaVersion !== SCHEMA_VERSION || !Array.isArray(m.items)) {
+	if (![1, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
 		throw new Error(`unsupported manifest at ${path} (schemaVersion ${m.schemaVersion})`);
 	}
-	return upgradeUnrecordedPlugin(m);
+	if (m.schemaVersion === 1) upgradeUnrecordedPlugin(m);
+	m.schemaVersion = SCHEMA_VERSION;
+	return m;
 }
 
-// The one upgrade. Before #33, an install that failed at `paseo plugin
-// install` recorded the plugin's copy (its paseo-plugin.json among the files
-// whose whole content is ours) but no plugin item, though Paseo kept the
-// plugin registered from the copy. The item is rebuilt from the copy, with the
-// id its recorded paseo-plugin.json declares, so the plugin item stays the one
-// record install and uninstall act on.
+// The one upgrade, from version 1. Before #33, an install that failed at
+// `paseo plugin install` recorded the plugin's copy (its paseo-plugin.json
+// among the files whose whole content is ours) but no plugin item, though
+// Paseo kept the plugin registered from the copy. The item is rebuilt from the
+// recorded copy directory, whose name is the plugin id: both installers name
+// it so, and uninstall still removes only a registration Paseo lists under
+// that id from that directory. Nothing is read from the copy itself, which may
+// be gone or edited.
 function upgradeUnrecordedPlugin(m) {
-	if (items(m, 'plugin').length) return m;
+	if (items(m, 'plugin').length) return;
 	const declared = ownedFiles(m).find((i) => basename(i.path) === 'paseo-plugin.json');
-	let id;
-	try {
-		id = declared && JSON.parse(readFileSync(declared.path, 'utf8')).id;
-	} catch {}
-	if (typeof id === 'string') add(m, pluginItem(id, dirname(declared.path)));
-	return m;
+	if (declared) add(m, pluginItem(basename(dirname(declared.path)), dirname(declared.path)));
 }
 
 export const serialize = (m) => JSON.stringify(m, null, 2) + '\n';
