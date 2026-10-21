@@ -12,7 +12,8 @@ they call, and the offline tests for all of it.
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
-| `tests/test-install.sh` | The installer and uninstaller's stub-driven offline harness, run against sandboxed homes (run directly, or via `tests/run.sh`). |
+| `tests/test-install.sh`, `tests/test-install-plugin.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33). Run directly, or via `tests/run.sh`. |
+| `tests/lib/install-harness.sh`, `tests/lib/cli-stub.mjs` | Their shared harness (sourced): sandboxes, helpers, and the stub CLIs (`npx`, `paseo`, `bd`, `bun`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
 | `tests/test-standing-orders.sh` | That installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
 
@@ -233,4 +234,5 @@ bash scripts/tests/run.sh                    # everything, offline
 node scripts/verify-curation.mjs             # the curation gate alone
 bash scripts/tests/test-standing-orders.sh   # the orders installer alone
 bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alone
+bash scripts/tests/test-install-plugin.sh    # their onboarding plugin step alone
 ```

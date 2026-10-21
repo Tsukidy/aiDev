@@ -1,339 +1,15 @@
 #!/usr/bin/env bash
 #
 # Tests for install.mjs and uninstall.mjs, the one-command installer and
-# manifest-driven uninstaller from ticket #21 (spec #11 D5–D9). Each case
-# drives both commands end to end against a sandboxed HOME (`mktemp -d`),
-# with CLAUDE_CONFIG_DIR, PASEO_HOME and the XDG variables pointed inside it
-# and the rest of the environment cleared (`env -i`), so nothing can reach the
-# real ~/.claude or ~/.paseo. The external CLIs are stubs that record every
-# invocation: `npx` (only `skills@<pin> add|remove`, which copies skill
-# directories and keeps a lock file the way skills@1.7.4 does in copy mode),
-# `paseo` (a plugin list kept outside the sandbox, which registers a plugin
-# before building it and keeps it, as failed, when the build fails, as the
-# daemon does), `bd` (`ready` and `init`)
-# and, when a case wants it present, `bun`. Fully offline.
+# manifest-driven uninstaller from ticket #21 (spec #11 D5–D9), on the shared
+# harness of lib/install-harness.sh: sandboxed homes, stub CLIs, fully
+# offline. The onboarding plugin step has its own cases in
+# test-install-plugin.sh.
 #
 # Usage: tests/test-install.sh
 
 set -uo pipefail
-
-here=$(cd "$(dirname "$0")" && pwd)
-repo=$(cd "$here/../.." && pwd)
-installer="$repo/scripts/install.mjs"
-uninstaller="$repo/scripts/uninstall.mjs"
-skills_src="$repo/skills"
-skills_pin="skills@1.7.4"
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-
-failures=0
-checks=0
-
-check() { # check <description> <command...>
-	local description=$1
-	shift
-	checks=$((checks + 1))
-	if "$@"; then
-		printf 'ok   %s\n' "$description"
-	else
-		printf 'FAIL %s\n' "$description"
-		failures=$((failures + 1))
-	fi
-}
-
-# --- stubs -----------------------------------------------------------------------
-#
-# One node script plays every external CLI; a thin bash wrapper per name puts
-# it on PATH. PATH is <stub dir>:<sysbin>:/usr/bin:/bin, where sysbin holds
-# only the real node: the real npx, paseo and bd live beside node in
-# /usr/local/bin and must never be reachable.
-
-sysbin=$tmp/sysbin
-mkdir -p "$sysbin"
-ln -s "$(command -v node)" "$sysbin/node"
-
-cat >"$tmp/stub.mjs" <<'STUB'
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const [name, ...args] = process.argv.slice(2);
-appendFileSync(process.env.STUB_LOG, `${name}|${args.join(' ')}|${process.cwd()}\n`);
-const home = process.env.HOME;
-const state = process.env.STUB_STATE;
-mkdirSync(state, { recursive: true });
-const fail = (process.env.STUB_FAIL ?? '').split(',');
-
-function listAfter(flag) {
-	const i = args.indexOf(flag);
-	if (i < 0) return [];
-	const out = [];
-	for (let j = i + 1; j < args.length && !args[j].startsWith('-'); j++) out.push(args[j]);
-	return out;
-}
-
-if (name === 'npx') {
-	// npx --yes skills@<pin> <add|remove> ...
-	const [, pkg, cmd] = args;
-	if (args[0] !== '--yes' || !pkg.startsWith('skills@')) process.exit(64);
-	if (fail.includes(`skills-${cmd}`)) process.exit(1);
-	const claude = process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude');
-	const lockPath = process.env.XDG_STATE_HOME
-		? join(process.env.XDG_STATE_HOME, 'skills', '.skill-lock.json')
-		: join(home, '.agents', '.skill-lock.json');
-	const lock = existsSync(lockPath) ? JSON.parse(readFileSync(lockPath, 'utf8')) : { version: 3, skills: {} };
-	const names = listAfter('-s');
-	if (cmd === 'add') {
-		const source = args[3];
-		for (const n of names) {
-			const dest = join(claude, 'skills', n);
-			rmSync(dest, { recursive: true, force: true });
-			cpSync(join(source, n), dest, { recursive: true });
-			lock.skills[n] = { source, sourceType: 'local' };
-		}
-	} else if (cmd === 'remove') {
-		for (const n of names) {
-			rmSync(join(claude, 'skills', n), { recursive: true, force: true });
-			delete lock.skills[n];
-		}
-	} else process.exit(64);
-	mkdirSync(join(lockPath, '..'), { recursive: true });
-	writeFileSync(lockPath, JSON.stringify(lock, null, 2));
-	process.exit(0);
-}
-
-if (name === 'paseo') {
-	// Plays the daemon the way Paseo 0.12 does (plugins/index.js): `install
-	// <dir>` registers the plugin before building it and keeps it, as failed,
-	// when the build fails; an id already configured is refused; `reload`
-	// rebuilds, and is refused for a disabled plugin. The build fails under
-	// STUB_FAIL=paseo-build.
-	const file = join(state, 'paseo-plugins.json');
-	const plugins = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
-	const save = () => writeFileSync(file, JSON.stringify(plugins));
-	const [group, cmd, arg] = args;
-	if (group !== 'plugin') process.exit(64);
-	if (fail.includes(`paseo-${cmd}`)) process.exit(1);
-	const start = (p) => {
-		p.status = fail.includes('paseo-build') ? 'failed' : 'running';
-		save();
-		if (p.status === 'failed') process.exit(1);
-	};
-	if (cmd === 'ls') {
-		process.stdout.write(JSON.stringify(plugins));
-	} else if (cmd === 'install') {
-		const id = JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id;
-		if (plugins.some((p) => p.id === id)) process.exit(1);
-		plugins.push({ id, path: arg });
-		start(plugins.at(-1));
-	} else if (cmd === 'remove') {
-		const i = plugins.findIndex((p) => p.id === arg);
-		if (i < 0) process.exit(1);
-		plugins.splice(i, 1);
-		save();
-	} else if (cmd === 'reload') {
-		const p = plugins.find((x) => x.id === arg);
-		if (!p) process.exit(1);
-		if (p.status === 'disabled') {
-			console.error(`Plugin is disabled: ${arg}`);
-			process.exit(1);
-		}
-		start(p);
-	} else process.exit(64);
-	process.exit(0);
-}
-
-if (name === 'bd') {
-	if (fail.includes(`bd-${args[0]}`)) process.exit(1);
-	if (args[0] === 'ready') process.exit(existsSync('.beads') ? 0 : 1);
-	if (args[0] === 'init') {
-		// bd init --stealth in a non-git directory also runs git init
-		// (docs/research/beads-cli-memory-surface.md A2).
-		mkdirSync('.beads');
-		writeFileSync('.beads/config.yaml', 'stub\n');
-		if (!existsSync('.git')) mkdirSync('.git');
-		process.exit(0);
-	}
-	process.exit(64);
-}
-
-if (name === 'bun') process.exit(0);
-process.exit(64);
-STUB
-
-make_stub_dir() { # make_stub_dir <dir> <names...>
-	local dir=$1
-	shift
-	mkdir -p "$dir"
-	for n in "$@"; do
-		printf '#!/usr/bin/env bash\nexec node %q %s "$@"\n' "$tmp/stub.mjs" "$n" >"$dir/$n"
-		chmod +x "$dir/$n"
-	done
-}
-make_stub_dir "$tmp/stubs/full" npx paseo bd bun
-make_stub_dir "$tmp/stubs/nobun" npx paseo bd
-make_stub_dir "$tmp/stubs/nonpx" paseo bd bun
-make_stub_dir "$tmp/stubs/nobd" npx paseo bun
-make_stub_dir "$tmp/stubs/nopaseo" npx bd bun
-
-# --- sandboxes ---------------------------------------------------------------------
-#
-# <sb>/home is HOME. Every sandbox has a launched first mate (its home exists
-# at firstmate's default location). `rich` sandboxes also carry what an
-# operator machine already has: settings.json with other hooks and keys, a
-# global CLAUDE.md, captain orders, an unrelated skill and agent, a skills-CLI
-# lock with someone else's entry, and an existing home memory database.
-
-mate_rel=.paseo/plugin-data/firstmate/home
-
-new_sandbox() { # new_sandbox <name> [rich]
-	local sb=$tmp/sb/$1 h
-	h=$sb/home
-	mkdir -p "$h/$mate_rel/data" "$sb/state"
-	: >"$sb/stub.log"
-	if [ "${2:-}" = rich ]; then
-		mkdir -p "$h/.claude/skills/my-own-skill" "$h/.claude/agents" "$h/.local/state/skills" "$h/$mate_rel/.beads"
-		cat >"$h/.claude/settings.json" <<'JSON'
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo operator-hook"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "paseo hooks claude Stop",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  },
-  "model": "opus"
-}
-JSON
-		chmod 600 "$h/.claude/settings.json" # Claude Code keeps it private: it can hold env secrets
-		printf '# My global rules\n\nAlways answer in English.\n' >"$h/.claude/CLAUDE.md"
-		printf -- '---\nname: my-own-skill\ndescription: operator skill\n---\n' >"$h/.claude/skills/my-own-skill/SKILL.md"
-		printf -- '---\nname: comment-sicko\ndescription: the operator wrote this one\n---\n' >"$h/.claude/agents/comment-sicko.md"
-		chmod 600 "$h/.claude/agents/comment-sicko.md"
-		printf '{\n  "version": 3,\n  "skills": {\n    "someone-else": {\n      "source": "x/y",\n      "sourceType": "github"\n    }\n  }\n}' >"$h/.local/state/skills/.skill-lock.json"
-		printf '# Standing orders\n\nNever push to main.\n' >"$h/$mate_rel/data/captain.md"
-		printf 'existing\n' >"$h/$mate_rel/.beads/config.yaml"
-	fi
-	printf '%s\n' "$sb"
-}
-
-# Run a command inside a sandbox with a cleared environment. Output (stdout and
-# stderr) lands in <sb>/out.txt; the exit status is returned.
-#   run_in <sb> <stub-set> [VAR=value ...] -- <script> [args...]
-run_in() {
-	local sb=$1 stubset=$2 h
-	shift 2
-	h=$sb/home
-	local extra=()
-	while [ "$1" != "--" ]; do
-		extra+=("$1")
-		shift
-	done
-	shift
-	env -i \
-		HOME="$h" \
-		CLAUDE_CONFIG_DIR="$h/.claude" \
-		PASEO_HOME="$h/.paseo" \
-		XDG_DATA_HOME="$h/.local/share" \
-		XDG_STATE_HOME="$h/.local/state" \
-		XDG_CONFIG_HOME="$h/.config" \
-		PATH="$tmp/stubs/$stubset:$sysbin:/usr/bin:/bin" \
-		STUB_LOG="$sb/stub.log" \
-		STUB_STATE="$sb/state" \
-		"${extra[@]}" \
-		node "$@" </dev/null >"$sb/out.txt" 2>&1
-}
-
-install_in() { # install_in <sb> [args...]
-	local sb=$1
-	shift
-	run_in "$sb" full -- "$installer" "$@"
-}
-
-uninstall_in() { # uninstall_in <sb> [args...]
-	local sb=$1
-	shift
-	run_in "$sb" full -- "$uninstaller" "$@"
-}
-
-# Every path under a directory with its type, mode, link target and content
-# hash: two equal snapshots mean an identical tree.
-snapshot() { # snapshot <dir>
-	(
-		cd "$1" || exit 1
-		find . -printf '%y %m %p -> %l\n' | LC_ALL=C sort
-		find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum
-	)
-}
-
-out_has() { # out_has <sb> <literal>
-	grep -qiF -- "$2" "$1/out.txt"
-}
-
-log_has() { # log_has <sb> <literal>
-	grep -qF -- "$2" "$1/stub.log"
-}
-
-# The onboarding plugin's status in the stub daemon's list ("" when not registered).
-plugin_status_is() { # plugin_status_is <sb> <status>
-	node -e '
-		const fs = require("fs");
-		const f = process.argv[1];
-		const list = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : [];
-		const p = list.find((x) => x.id === "firstmate-beads-onboarding");
-		process.exit((p?.status ?? "") === process.argv[2] ? 0 : 1);
-	' "$1/state/paseo-plugins.json" "$2"
-}
-
-# Where install keeps the onboarding plugin's copy.
-plugin_copy() { # plugin_copy <sb>
-	printf '%s\n' "$1/home/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding"
-}
-
-# The daemon calls that change registrations, as `plugin <verb> <arg>` lines.
-plugin_calls() { # plugin_calls <sb>
-	grep -E '^paseo\|plugin (install|reload|remove) ' "$1/stub.log" | cut -d'|' -f2
-}
-
-no_mutating_calls() { # no_mutating_calls <sb>  — only `paseo plugin ls --json` allowed
-	! grep -vE '^paseo\|plugin ls --json\|' "$1/stub.log" | grep -q .
-}
-
-has_prefix() { # has_prefix <file> <printf-format>
-	printf "$2" >"$tmp/prefix"
-	head -c "$(wc -c <"$tmp/prefix")" "$1" | cmp -s - "$tmp/prefix"
-}
-
-manifest_of() { # manifest_of <sb>
-	printf '%s\n' "$1/home/.local/state/aidev/install-manifest.json"
-}
-
-# Evaluate a node expression against the parsed manifest (`m`) and exit 0 when
-# it is truthy.
-manifest_true() { # manifest_true <sb> <js-expression>
-	node -e '
-		const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-		process.exit(('"$2"') ? 0 : 1);
-	' "$(manifest_of "$1")"
-}
+. "$(dirname "$0")/lib/install-harness.sh"
 
 # The skills the installer should hand to the skills CLI by default: every
 # directory of the tree that carries a SKILL.md.
@@ -462,9 +138,9 @@ check "captain.md carries the beads captain-orders block once" test "$(grep -c '
 check "an existing home memory database is not initialized again" bash -c '! grep -q "^bd|init" "$1"' _ "$rich/stub.log"
 
 # The onboarding plugin: copied under the data directory, installed from there.
-plugin_dir=$h/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding
+plugin_dir=$(plugin_copy "$rich")
 check "the onboarding plugin source is copied under the data directory" \
-	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/index.server.ts" "$plugin_dir/index.server.ts"
+	cmp -s "$plugin_src/index.server.ts" "$plugin_dir/index.server.ts"
 check "the onboarding plugin is installed with paseo plugin install" log_has "$rich" "paseo|plugin install $plugin_dir|"
 check "the onboarding plugin is running" plugin_status_is "$rich" running
 
@@ -530,7 +206,7 @@ check "uninstall exits 0" test "$status" -eq 0
 [ "$status" -eq 0 ] || sed 's/^/    | /' "$rich/out.txt"
 check "uninstall removes the skills it installed through the skills CLI" \
 	log_has "$rich" "npx|--yes $skills_pin remove -g -y -a claude-code -s $expected_skills|"
-check "uninstall removes the onboarding plugin" log_has "$rich" "paseo|plugin remove firstmate-beads-onboarding|"
+check "uninstall removes the onboarding plugin" log_has "$rich" "paseo|plugin remove $plugin_id|"
 check "install → uninstall leaves the operator machine identical to its snapshot" test "$(snapshot "$h")" = "$before_rich"
 check "the plugin list is back to empty" test "$(cat "$rich/state/paseo-plugins.json")" = "[]"
 
@@ -579,13 +255,7 @@ cp "$h/.claude/pstack-models.md" "$tmp/edited-sheet.md"
 check "the hook stays silent when the sheet says session hook: off" test -z "$(run_hook "$h")"
 printf '\nOperator note added later.\n' >>"$h/.claude/CLAUDE.md"
 printf '\nCaptain footnote added later.\n' >>"$h/$mate_rel/data/captain.md"
-node -e '
-	const fs = require("fs");
-	const f = process.argv[1];
-	const s = JSON.parse(fs.readFileSync(f, "utf8"));
-	s.theme = "dark";
-	fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
-' "$h/.claude/settings.json"
+json_edit "$h/.claude/settings.json" '(s) => { s.theme = "dark"; }'
 uninstall_in "$edits"
 check "uninstall after operator edits exits 0" test $? -eq 0
 check "a sheet edited after install survives uninstall" cmp -s "$tmp/edited-sheet.md" "$h/.claude/pstack-models.md"
@@ -726,7 +396,7 @@ check "uninstall leaves the colliding skills and the lock as they were" test "$(
 
 sb=$(new_sandbox prior-orders rich)
 h=$sb/home
-for orders in "$repo/scripts/install-standing-orders.sh" "$repo/personal-extensions/paseo-firstmate-beads-onboarding/install-captain-orders.sh"; do
+for orders in "$repo/scripts/install-standing-orders.sh" "$plugin_src/install-captain-orders.sh"; do
 	env -i HOME="$h" PASEO_HOME="$h/.paseo" PATH="$tmp/stubs/full:$sysbin:/usr/bin:/bin" STUB_LOG="$sb/stub.log" STUB_STATE="$sb/state" \
 		bash "$orders" >/dev/null 2>&1
 done
@@ -789,13 +459,7 @@ refuse_case "a marker name in captain.md prose" "$sb" full
 
 sb=$(new_sandbox hook-readd)
 install_in "$sb"
-node -e '
-	const fs = require("fs");
-	const f = process.argv[1];
-	const s = JSON.parse(fs.readFileSync(f, "utf8"));
-	delete s.hooks;
-	fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");
-' "$sb/home/.claude/settings.json"
+json_edit "$sb/home/.claude/settings.json" '(s) => { delete s.hooks; }'
 install_in "$sb"
 check "a re-run restores a deleted routing hook entry" grep -qF 'session-start.sh' "$sb/home/.claude/settings.json"
 check "the restored entry is still one manifest item" manifest_true "$sb" 'm.items.filter((i) => i.kind === "hook-entry").length === 1'
@@ -814,137 +478,6 @@ check "uninstall kept the backup it could not consume" test -n "$kept_backups"
 install_in "$sb"
 check "a reinstall never overwrites a kept backup" bash -c '
 	cd "$1" && sha256sum -c --quiet <<<"$2"' _ "$h/.local/state/aidev/backups" "$kept_backups"
-
-# --- the plugin copy outlives a failed plugin removal --------------------------------------
-
-sb=$(new_sandbox plugin-remove-fails)
-install_in "$sb"
-run_in "$sb" full STUB_FAIL=paseo-remove -- "$uninstaller"
-check "a failed plugin removal makes uninstall exit nonzero" test $? -ne 0
-check "the plugin's source copy is still there for the daemon" \
-	test -f "$sb/home/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding/index.server.ts"
-uninstall_in "$sb" --purge --yes
-check "a later uninstall finishes the job" test ! -e "$(manifest_of "$sb")"
-
-# --- the onboarding plugin step (#33) ------------------------------------------------------
-#
-# A registration from our copy is ours, recorded or not; one from anywhere else
-# is not. The helpers put a sandbox into the states the step converges from.
-
-# What an install that failed at the daemon before #33 left: the copy recorded,
-# the registration failed, no plugin item.
-forget_plugin() { # forget_plugin <sb>
-	node -e '
-		const fs = require("fs");
-		const f = process.argv[1];
-		const m = JSON.parse(fs.readFileSync(f, "utf8"));
-		m.items = m.items.filter((i) => i.kind !== "plugin");
-		fs.writeFileSync(f, JSON.stringify(m, null, 2) + "\n");
-	' "$(manifest_of "$1")"
-}
-
-# The copy holds an older version of one of its files, as after a repo update.
-age_copy() { # age_copy <sb>
-	local f
-	f=$(plugin_copy "$1")/README.md
-	printf 'an older README\n' >"$f"
-	node -e '
-		const fs = require("fs");
-		const [manifest, file] = process.argv.slice(1);
-		const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
-		m.items.find((i) => i.path === file).sha256 = require("crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-		fs.writeFileSync(manifest, JSON.stringify(m, null, 2) + "\n");
-	' "$(manifest_of "$1")" "$f"
-}
-
-set_plugin_status() { # set_plugin_status <sb> <status>  — what the stub daemon reports
-	node -e '
-		const fs = require("fs");
-		const f = process.argv[1];
-		fs.writeFileSync(f, JSON.stringify(JSON.parse(fs.readFileSync(f, "utf8")).map((p) => ({ ...p, status: process.argv[2] }))));
-	' "$1/state/paseo-plugins.json" "$2"
-}
-
-# A failed build still registers the plugin; it is recorded, and uninstall
-# takes it back.
-sb=$(new_sandbox plugin-build-fails)
-before=$(snapshot "$sb/home")
-run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
-check "a failing plugin build makes the install exit nonzero" test $? -ne 0
-check "the daemon kept the failed registration (as Paseo does)" plugin_status_is "$sb" failed
-check "the failed registration is recorded in the manifest" manifest_true "$sb" \
-	'm.items.some((i) => i.kind === "plugin" && i.id === "firstmate-beads-onboarding")'
-uninstall_in "$sb" --purge --yes
-check "uninstall after a failed plugin build exits 0" test $? -eq 0
-check "uninstall after a failed plugin build leaves no registration" plugin_status_is "$sb" ""
-check "install with a failed plugin build → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
-
-# The state the #21 installer left on the operator machine converges on re-run.
-sb=$(new_sandbox plugin-failed-unrecorded)
-before=$(snapshot "$sb/home")
-run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
-forget_plugin "$sb"
-: >"$sb/stub.log"
-install_in "$sb"
-status=$?
-check "re-running over an unrecorded failed registration from our copy exits 0" test "$status" -eq 0
-[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
-check "the re-run rebuilds it with reload, not a second install" \
-	test "$(plugin_calls "$sb")" = "plugin reload firstmate-beads-onboarding"
-check "the re-run leaves the plugin running" plugin_status_is "$sb" running
-check "the re-run records the plugin in the manifest" manifest_true "$sb" \
-	'm.items.some((i) => i.kind === "plugin" && i.id === "firstmate-beads-onboarding")'
-uninstall_in "$sb" --purge --yes
-check "uninstall after the converged re-run leaves no registration" plugin_status_is "$sb" ""
-check "uninstall after the converged re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
-
-# ...and uninstall alone takes that registration back too.
-sb=$(new_sandbox plugin-failed-uninstall)
-before=$(snapshot "$sb/home")
-run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
-forget_plugin "$sb"
-uninstall_in "$sb" --purge --yes
-check "uninstall over an unrecorded failed registration exits 0" test $? -eq 0
-check "uninstall removes the unrecorded registration from our copy" plugin_status_is "$sb" ""
-check "uninstall over an unrecorded failed registration restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
-
-# A running plugin whose copy is out of date is reloaded; the dry run names
-# the same call.
-sb=$(new_sandbox plugin-changed)
-install_in "$sb"
-age_copy "$sb"
-: >"$sb/stub.log"
-install_in "$sb" --dry-run
-check "the dry run names the reload the run makes" out_has "$sb" "then paseo plugin reload firstmate-beads-onboarding"
-install_in "$sb"
-check "re-running over an out-of-date copy exits 0" test $? -eq 0
-check "a running plugin whose copy changed is reloaded" test "$(plugin_calls "$sb")" = "plugin reload firstmate-beads-onboarding"
-check "the out-of-date copy is current again" \
-	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/README.md" "$(plugin_copy "$sb")/README.md"
-check "the reloaded plugin is running" plugin_status_is "$sb" running
-
-# A plugin disabled in Paseo stays disabled (the stub, like Paseo, refuses to
-# reload it); its copy is still refreshed.
-sb=$(new_sandbox plugin-disabled)
-install_in "$sb"
-age_copy "$sb"
-set_plugin_status "$sb" disabled
-: >"$sb/stub.log"
-install_in "$sb"
-check "re-running with the plugin disabled in Paseo exits 0" test $? -eq 0
-check "a disabled plugin is neither reloaded nor reinstalled" test -z "$(plugin_calls "$sb")"
-check "a disabled plugin's copy is refreshed" \
-	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/README.md" "$(plugin_copy "$sb")/README.md"
-check "a disabled plugin stays disabled" plugin_status_is "$sb" disabled
-
-# A plugin of that id registered from anywhere else is not ours.
-sb=$(new_sandbox plugin-foreign)
-printf '[{"id":"firstmate-beads-onboarding","path":"/opt/elsewhere","status":"running"}]' >"$sb/state/paseo-plugins.json"
-install_in "$sb"
-check "install with the plugin registered from elsewhere exits 0" test $? -eq 0
-uninstall_in "$sb" --purge --yes
-check "install and uninstall leave a plugin registered from elsewhere alone" test -z "$(plugin_calls "$sb")"
-check "the plugin registered from elsewhere is still there" plugin_status_is "$sb" running
 
 # --- partial failure converges ----------------------------------------------------------
 
@@ -1004,6 +537,4 @@ check "the default skills-CLI lock is ~/.agents/.skill-lock.json" test -f "$h/.a
 env -i HOME="$h" PATH="$tmp/stubs/full:$sysbin:/usr/bin:/bin" STUB_LOG="$sb/stub.log" STUB_STATE="$sb/state" \
 	node "$uninstaller" --purge --yes </dev/null >"$sb/out.txt" 2>&1
 check "the default-location round trip leaves an empty home" test -z "$(ls -A "$h" | grep -v '^\.paseo$')"
-
-printf '\n%d checks, %d failures\n' "$checks" "$failures"
-[ "$failures" -eq 0 ]
+summary
