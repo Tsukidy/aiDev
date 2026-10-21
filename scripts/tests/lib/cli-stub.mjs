@@ -5,6 +5,7 @@
 // (`ready` and `init`) and bun. Every call is logged to STUB_LOG as
 // `<name>|<args>|<cwd>`; STUB_FAIL lists `<name>-<command>` calls to fail.
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { isBuiltin } from 'node:module';
 import { join } from 'node:path';
 
 const [name, ...args] = process.argv.slice(2);
@@ -56,7 +57,10 @@ if (name === 'paseo') {
 	// Plays the daemon the way Paseo 0.12 does (plugins/index.js): `install
 	// <dir>` registers the plugin before building it and keeps it, as failed,
 	// when the build fails; an id already configured is refused; `reload`
-	// rebuilds, and is refused for a disabled plugin. The build fails under
+	// rebuilds, and is refused for a disabled plugin. Like Paseo's, the build
+	// reads the copy where it lies (plugins/compiler.js): it fails when the
+	// copy's index.server.ts imports anything the host does not supply (Node
+	// builtins and @getpaseo/plugin/server), and always under
 	// STUB_FAIL=paseo-build.
 	const file = join(state, 'paseo-plugins.json');
 	const plugins = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
@@ -64,8 +68,13 @@ if (name === 'paseo') {
 	const [group, cmd, arg] = args;
 	if (group !== 'plugin') process.exit(64);
 	if (fail.includes(`paseo-${cmd}`)) process.exit(1);
+	const builds = (dir) => {
+		const source = readFileSync(join(dir, 'index.server.ts'), 'utf8');
+		const specifiers = [...source.matchAll(/^\s*(?:import|export)\s+(?:[^"';]*?\s+from\s+)?["']([^"']+)["']/gm)].map((m) => m[1]);
+		return !fail.includes('paseo-build') && specifiers.every((s) => isBuiltin(s) || s === '@getpaseo/plugin/server');
+	};
 	const start = (p) => {
-		p.status = fail.includes('paseo-build') ? 'failed' : 'running';
+		p.status = builds(p.path) ? 'running' : 'failed';
 		save();
 		if (p.status === 'failed') process.exit(1);
 	};

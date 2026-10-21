@@ -14,24 +14,40 @@ set -uo pipefail
 
 # The states the step converges from.
 
-# What an install that failed at the daemon before #33 left: the copy recorded,
-# the registration failed, no plugin item.
-forget_plugin() { # forget_plugin <sb>
+forget_plugin() { # forget_plugin <sb>  — the manifest records no plugin item
 	json_edit "$(manifest_of "$1")" '(m) => { m.items = m.items.filter((i) => i.kind !== "plugin"); }'
 }
 
-# The copy holds an older version of one of its files, as after a repo update.
-age_copy() { # age_copy <sb>
-	local f
-	f=$(plugin_copy "$1")/README.md
-	printf 'an older README\n' >"$f"
+# Record a copy file's current content as what the installer wrote, as if an
+# older install had placed it.
+record_as_ours() { # record_as_ours <sb> <file>
 	json_edit "$(manifest_of "$1")" "(m) => {
-		m.items.find((i) => i.path === '$f').sha256 = require('crypto').createHash('sha256').update(require('fs').readFileSync('$f')).digest('hex');
+		m.items.find((i) => i.path === '$2').sha256 = require('crypto').createHash('sha256').update(require('fs').readFileSync('$2')).digest('hex');
 	}"
 }
 
 set_plugin_status() { # set_plugin_status <sb> <status>  — what the stub daemon reports
 	json_edit "$1/state/paseo-plugins.json" "(list) => { for (const p of list) p.status = '$2'; }"
+}
+
+# The copy holds an older version of one of its files, as after a repo update.
+age_copy() { # age_copy <sb>
+	printf 'an older README\n' >"$(plugin_copy "$1")/README.md"
+	record_as_ours "$1" "$(plugin_copy "$1")/README.md"
+}
+
+# What the #21 installer left on the operator machine (after an install here):
+# the copy of the pre-#33 source, which imports @getpaseo/client and so does
+# not build where it lies, recorded as ours; the registration failed; no
+# plugin item.
+pre33_state() { # pre33_state <sb>
+	local f
+	f=$(plugin_copy "$1")/index.server.ts
+	sed 's|^type PaseoApi = PluginHookContext\["paseo"\];$|import type { PaseoApi } from "@getpaseo/client";|' "$plugin_src/index.server.ts" >"$f"
+	grep -q '"@getpaseo/client"' "$f" || { echo "pre33_state: the PaseoApi line moved; update this helper" >&2; return 1; }
+	record_as_ours "$1" "$f"
+	set_plugin_status "$1" failed
+	forget_plugin "$1"
 }
 
 plugin_recorded() { # plugin_recorded <sb>  — the manifest holds our plugin item
@@ -62,11 +78,14 @@ check "uninstall after a failed plugin build leaves no registration" plugin_stat
 check "install with a failed plugin build → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
 # --- the state the #21 installer left on the operator machine converges on re-run ----------
+#
+# The stub builds the copy where it lies, so the plugin runs only if the new
+# source is placed before the daemon is asked to reload it.
 
 sb=$(new_sandbox plugin-failed-unrecorded)
 before=$(snapshot "$sb/home")
-run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
-forget_plugin "$sb"
+install_in "$sb"
+pre33_state "$sb"
 : >"$sb/stub.log"
 install_in "$sb"
 status=$?
@@ -82,8 +101,8 @@ check "uninstall after the converged re-run restores the snapshot" test "$(snaps
 # ...and uninstall alone takes that registration back too.
 sb=$(new_sandbox plugin-failed-uninstall)
 before=$(snapshot "$sb/home")
-run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
-forget_plugin "$sb"
+install_in "$sb"
+pre33_state "$sb"
 uninstall_in "$sb" --purge --yes
 check "uninstall over an unrecorded failed registration exits 0" test $? -eq 0
 check "uninstall removes the unrecorded registration from our copy" plugin_status_is "$sb" ""
