@@ -22,11 +22,20 @@
 //   never --skip-agents: the agent-facing files it writes are what make memory
 //   conventions discoverable in worktrees and clones. Init commits the scaffolding
 //   itself; this plugin performs no git operations and writes no files.
+// - Skip list: before any bd call, the operator-owned skip list is read afresh
+//   (skipListPath: one absolute or ~/ path per line, # comments). A base whose
+//   real path matches an entry's is logged and left alone, and not marked
+//   completed, so removing the entry makes it eligible on its next event. A
+//   missing list skips nothing; a list that cannot be read initializes nothing
+//   and leaves the project retryable (Tsukidy/aiDev #34).
 // - Failure posture: absent bd, a failed initialized-check, or a failed init each
 //   log a warning and return without throwing. The standing orders are the
 //   behavioral safety net ("no database found" → report blocked, never
 //   self-initialize).
 import { execFile } from "node:child_process";
+import { readFile, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import type { PluginHookContext, PluginHookWorkspace, PluginServerContext } from "@getpaseo/plugin/server";
 type PaseoApi = PluginHookContext["paseo"];
 
@@ -67,6 +76,17 @@ export function createOnboardingHandler(log: Pick<Console, "log" | "warn"> = con
 async function onboard(workspace: PluginHookWorkspace, paseo: PaseoApi, signal: AbortSignal, log: Pick<Console, "log" | "warn">): Promise<boolean> {
 	const base = await resolveProjectRoot(workspace.projectId, paseo);
 
+	const list = skipListPath();
+	const skipped = await onSkipList(list, base, log);
+	if (skipped === null) {
+		log.warn(`[firstmate-beads-onboarding] cannot read the skip list ${list} — not onboarding ${base}; will retry on the next workspace event`);
+		return false;
+	}
+	if (skipped) {
+		log.log(`[firstmate-beads-onboarding] skipping ${base}: it is on the skip list ${list}`);
+		return false; // not completed: removing the entry makes it eligible again
+	}
+
 	const ready = await run("bd", ["ready"], base, signal);
 	if (ready.kind === "absent") {
 		log.warn(`[firstmate-beads-onboarding] bd not found on PATH — cannot onboard ${base}; the mate's standing orders cover the gap (report blocked, never self-initialize)`);
@@ -104,6 +124,53 @@ async function resolveProjectRoot(projectId: string, paseo: PaseoApi): Promise<s
 	const project = projects.find((candidate) => candidate.projectId === projectId);
 	if (!project) throw new Error(`project ${projectId} not found in the Paseo project list`);
 	return project.projectRootPath;
+}
+
+/**
+ * The operator's skip list: aidev/beads-onboarding-skip under XDG_CONFIG_HOME
+ * when that is absolute, else under ~/.config, beside the aiDev installer's
+ * install-exclude. Resolved from the daemon's environment on every event.
+ */
+function skipListPath(): string {
+	const xdg = process.env.XDG_CONFIG_HOME;
+	return join(xdg && isAbsolute(xdg) ? xdg : join(home(), ".config"), "aidev", "beads-onboarding-skip");
+}
+
+/** The daemon's HOME, as the installer reads it. */
+const home = () => process.env.HOME || homedir();
+
+/** Whether the base is on the skip list, by real path; null when the list cannot be read. */
+async function onSkipList(list: string, base: string, log: Pick<Console, "log" | "warn">): Promise<boolean | null> {
+	let text: string;
+	try {
+		text = await readFile(list, "utf8");
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? false : null;
+	}
+	const entries = text
+		.split("\n")
+		.map((line) => line.replace(/#.*/, "").trim())
+		.filter(Boolean);
+	if (!entries.length) return false;
+	const target = await realOrResolved(base);
+	for (const entry of entries) {
+		const path = entry === "~" ? home() : entry.startsWith("~/") ? join(home(), entry.slice(2)) : entry;
+		if (!isAbsolute(path)) {
+			log.warn(`[firstmate-beads-onboarding] skip list ${list}: ignoring ${JSON.stringify(entry)}, which is not an absolute or ~/ path`);
+			continue;
+		}
+		if ((await realOrResolved(path)) === target) return true;
+	}
+	return false;
+}
+
+/** A path's real path, or, when it does not resolve, the path normalized. */
+async function realOrResolved(path: string): Promise<string> {
+	try {
+		return await realpath(path);
+	} catch {
+		return resolve(path);
+	}
 }
 
 type RunResult =

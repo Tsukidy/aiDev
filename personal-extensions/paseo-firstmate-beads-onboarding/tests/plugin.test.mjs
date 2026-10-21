@@ -6,7 +6,7 @@
 // outcome, and the degrade posture.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { test, before, after } from "node:test";
@@ -17,9 +17,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 let stubsDir;
 let callLog;
 let sandbox;
+let skipList;
 
 before(() => {
 	sandbox = mkdtempSync(join(tmpdir(), "beads-onboarding-"));
+	// The operator's skip list lives under XDG_CONFIG_HOME: point it into the
+	// sandbox for every test, so the real one is never read.
+	process.env.XDG_CONFIG_HOME = join(sandbox, "config");
+	skipList = join(sandbox, "config", "aidev", "beads-onboarding-skip");
 	stubsDir = join(sandbox, "stubs");
 	callLog = join(sandbox, "bd-calls.log");
 	mkdirSync(stubsDir);
@@ -280,4 +285,140 @@ test("unknown project id (absent from the Paseo project list) warns and runs not
 
 	assert.deepEqual(calls(), [], "no bd invocation without a resolvable base");
 	assert.match(log.lines.warn.join("\n"), /proj-x.*not found/);
+});
+
+// --- the operator's skip list (#34) ------------------------------------------------
+
+/** Write the skip list (null removes it). */
+function setSkipList(text) {
+	rmSync(skipList, { recursive: true, force: true });
+	if (text === null) return;
+	mkdirSync(dirname(skipList), { recursive: true });
+	writeFileSync(skipList, text);
+}
+
+test("a project whose base is on the skip list is logged and never initialized", async () => {
+	const base = freshRepo("skipped");
+	setSkipList(`# projects beads must not onboard\n${base}\n`);
+	resetCalls();
+	try {
+		const log = await onboard({ projects: [project("proj-skip", base)], workspace: event("proj-skip", base) });
+
+		assert.deepEqual(calls(), [], "no bd invocation for a skipped project");
+		assert.equal(existsSync(join(base, ".beads-initialized")), false);
+		assert.equal(log.lines.warn.length, 0, "a skip is not a failure");
+		assert.match(log.lines.log.join("\n"), new RegExp(`skip.*${base}`));
+	} finally {
+		setSkipList(null);
+	}
+});
+
+test("skip-list entries match by real path, either side a symlink", async () => {
+	const base = freshRepo("skipped-real");
+	const viaLink = join(sandbox, "link-to-skipped-real");
+	symlinkSync(base, viaLink);
+	try {
+		// The entry is a symlink to the base.
+		setSkipList(`${viaLink}\n`);
+		resetCalls();
+		await onboard({ projects: [project("proj-sr1", base)], workspace: event("proj-sr1", base) });
+		assert.deepEqual(calls(), [], "an entry naming a symlink to the base skips it");
+
+		// The project root is registered through the symlink; the entry is the real path.
+		setSkipList(`${base}/\n`);
+		resetCalls();
+		await onboard({ projects: [project("proj-sr2", viaLink)], workspace: event("proj-sr2", viaLink) });
+		assert.deepEqual(calls(), [], "a base registered through a symlink is skipped by its real path");
+	} finally {
+		setSkipList(null);
+	}
+});
+
+test("a ~/ entry is the daemon's HOME", async () => {
+	const home = join(sandbox, "skip-home");
+	const base = join(home, "proj");
+	mkdirSync(base, { recursive: true });
+	setSkipList("~/proj\n");
+	const saved = process.env.HOME;
+	process.env.HOME = home;
+	resetCalls();
+	try {
+		await onboard({ projects: [project("proj-tilde", base)], workspace: event("proj-tilde", base) });
+		assert.deepEqual(calls(), [], "~/proj names $HOME/proj");
+	} finally {
+		process.env.HOME = saved;
+		setSkipList(null);
+	}
+});
+
+test("a project not on the skip list onboards as before", async () => {
+	const base = freshRepo("not-skipped");
+	setSkipList(`${join(sandbox, "some-other-project")}\n${base}-suffix\n# ${base}\n`);
+	resetCalls();
+	try {
+		const log = await onboard({ projects: [project("proj-ns", base)], workspace: event("proj-ns", base) });
+		assert.deepEqual(calls(), [
+			["ready", "ready", base],
+			["init", "init --quiet", base],
+		], "other entries, a longer path and a commented-out line do not skip it");
+		assert.equal(log.lines.warn.length, 0);
+	} finally {
+		setSkipList(null);
+	}
+});
+
+test("an entry removed later makes the project eligible on its next event", async () => {
+	const base = freshRepo("unskipped");
+	const handler = createOnboardingHandler(fakeLog());
+	const context = { paseo: stubPaseo([project("proj-un", base)]), signal: new AbortController().signal };
+	try {
+		setSkipList(`${base}\n`);
+		resetCalls();
+		await withStubBd(() => handler({ workspace: event("proj-un", base) }, context));
+		assert.deepEqual(calls(), [], "skipped while listed");
+
+		setSkipList("");
+		await withStubBd(() => handler({ workspace: event("proj-un", base) }, context));
+		assert.deepEqual(calls(), [
+			["ready", "ready", base],
+			["init", "init --quiet", base],
+		], "the same handler onboards it once the entry is gone");
+	} finally {
+		setSkipList(null);
+	}
+});
+
+test("a missing or empty skip list skips nothing", async () => {
+	for (const [name, text] of [["missing", null], ["empty", ""], ["comments-only", "# nothing here\n\n   \n"]]) {
+		const base = freshRepo(`skip-list-${name}`);
+		setSkipList(text);
+		resetCalls();
+		await onboard({ projects: [project(`proj-${name}`, base)], workspace: event(`proj-${name}`, base) });
+		assert.deepEqual(calls(), [
+			["ready", "ready", base],
+			["init", "init --quiet", base],
+		], `a ${name} skip list changes nothing`);
+	}
+	setSkipList(null);
+});
+
+test("an unreadable skip list warns, initializes nothing, and the project retries on its next event", async () => {
+	const base = freshRepo("skip-unreadable");
+	const log = fakeLog();
+	const handler = createOnboardingHandler(log);
+	const context = { paseo: stubPaseo([project("proj-ur", base)]), signal: new AbortController().signal };
+	mkdirSync(skipList, { recursive: true }); // a directory where the list should be
+	resetCalls();
+	try {
+		await withStubBd(() => handler({ workspace: event("proj-ur", base) }, context));
+		assert.deepEqual(calls(), [], "no bd invocation while the list cannot be read");
+		assert.match(log.lines.warn.join("\n"), /skip list/);
+	} finally {
+		setSkipList(null);
+	}
+	await withStubBd(() => handler({ workspace: event("proj-ur", base) }, context));
+	assert.deepEqual(calls(), [
+		["ready", "ready", base],
+		["init", "init --quiet", base],
+	], "once the list reads, the next event onboards it");
 });
