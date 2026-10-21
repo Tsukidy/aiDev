@@ -67,6 +67,21 @@ check "the operator's own skill is untouched" grep -qx 'description: operator sk
 check "question-guidelines and triage are installed" \
 	bash -c 'test -f "$1/question-guidelines/SKILL.md" && test -f "$1/triage/SKILL.md"' _ "$h/.claude/skills"
 
+# D14 (#45): the planning skills, retro and handoff start on their own; the
+# other user-only skills keep `disable-model-invocation` (nine of them: the
+# spec counts ten, but create-verification-skill never carried the flag).
+# Read from the installed frontmatter, so the install carries the change as-is.
+model_invocable="grill-with-docs handoff retro setup-matt-pocock-skills to-spec to-tickets triage wayfinder"
+user_only="improve-codebase-architecture loop-me setup-ts-deep-modules teach to-questionnaire wait-what writing-beats writing-fragments writing-shape"
+flagged=$(for s in $all_skills; do
+	awk 'NR == 1 { next } /^---$/ { exit } /^disable-model-invocation: *true$/ { found = 1 } END { exit !found }' \
+		"$h/.claude/skills/$s/SKILL.md" && printf '%s\n' "$s"
+done)
+check "exactly the nine other user-only skills carry disable-model-invocation once installed" \
+	test "$flagged" = "$(printf '%s\n' $user_only | LC_ALL=C sort)"
+check "the eight D14 skills install without disable-model-invocation" bash -c '
+	for s in $2; do ! grep -q "^disable-model-invocation:" "$1/$s/SKILL.md" || exit 1; done' _ "$h/.claude/skills" "$model_invocable"
+
 # Agents: the four carried definitions and ten effort agents, by bare name.
 installed_agents=$(cd "$h/.claude/agents" && ls | sed 's/\.md$//' | LC_ALL=C sort)
 check "the agents directory holds exactly the 4 carried and 10 effort agents" test "$installed_agents" = "$expected_agents"
