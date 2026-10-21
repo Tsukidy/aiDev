@@ -680,7 +680,7 @@ run_harness test-install.sh "the installer and uninstaller tests pass (ticket #2
 check "the onboarding plugin step's decision table holds (#33)" node --test "$here/onboarding-plugin.test.mjs"
 run_harness test-install-plugin.sh "the installer's onboarding plugin step tests pass (#33)"
 run_harness ../../personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh \
-	"the onboarding plugin's own tests pass, its build from a bare copy included (#33)"
+	"the onboarding plugin's own tests pass, its build from a bare copy included, skipped without paseo on PATH (#33)"
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

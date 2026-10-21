@@ -32,7 +32,7 @@ paseo plugin ls                         # firstmate-beads-onboarding must be run
 ```
 
 `scripts/install.mjs` registers the plugin from a copy of the files
-`package.json` lists, under `~/.local/share/aidev`, runs
+`package.json` lists, under `$XDG_DATA_HOME/aidev` (by default `~/.local/share/aidev`), runs
 `install-captain-orders.sh`, and records both for `scripts/uninstall.mjs`
 (`scripts/README.md` has the details). A plugin of this id registered any
 other way, such as `paseo plugin install` of this directory, is foreign to the
@@ -94,8 +94,9 @@ the superseded prototype, re-implemented fresh):
   builtins and `@getpaseo/plugin/server`) and a copy without `node_modules`
   builds (#33). Asserted from the imports, and, wherever `paseo` is on `PATH`,
   by building a copy of the files `package.json` lists (as the installer
-  copies them) with Paseo's own compiler, found beside that `paseo`; a missing
-  compiler fails the check.
+  copies them) with Paseo's own compiler, resolved from that `paseo`'s CLI
+  package; a compiler that cannot be found fails the check, and only a
+  machine without `paseo` skips it.
 - **Installer seam** (`tests/installer.test.sh`): synthetic mate homes covering
   every home-resolution branch (absolute, `~`, bare `~`, empty config value,
   missing config, corrupt config → default; legacy location; no home → refusal

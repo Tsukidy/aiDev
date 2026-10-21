@@ -183,7 +183,9 @@ if (flags['dry-run']) {
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
 // Save the manifest with every directory the install has created so far, so
-// an interrupted run leaves nothing uninstall cannot find.
+// an interrupted run leaves nothing uninstall cannot find. finish() and the
+// plugin step (8b) checkpoint; a run interrupted before the first checkpoint
+// can still leave directories unrecorded.
 const checkpoint = () => {
 	saveManifest(ctx, m); // creates the state directory before it is recorded
 	for (const d of watched) if (isDir(d)) ensure(m, dirItem(d), (i) => i.path === d);
