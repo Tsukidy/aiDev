@@ -296,33 +296,37 @@ export function backupOnce(ctx, m, path, { keepLink = false } = {}) {
 	add(m, backupItem(path, dest, fileSha(dest)));
 }
 
-// What placing a file whose whole content is ours does to it: `current` (it
+// What placing a file whose whole content is ours will do, read from the
+// manifest and the disk without changing either: `action` is `current` (it
 // already holds the content), `write` (absent, or ours and unedited since we
 // wrote it), `replace` (someone else's file: backed up, then replaced, and
-// restored at uninstall), or `kept` (ours, but edited since: left as is).
-// Pure, so a plan reads exactly what placeOwnedFile then does.
+// restored at uninstall) or `kept` (ours, but edited since: left as is);
+// `record` is its manifest item, if any; `bytes` is what it holds afterwards.
+// A plan reads this, and placeOwnedFile acts on the same result.
 export function ownedFileAction(m, { path, content }) {
-	const rec = ownedFile(m, path);
+	const record = ownedFile(m, path);
 	const cur = fileSha(path);
-	if (!rec) return cur === null ? 'write' : 'replace';
-	if (cur !== null && cur !== rec.sha256) return 'kept';
-	return cur === sha256(content) ? 'current' : 'write';
+	let action;
+	if (!record) action = cur === null ? 'write' : 'replace';
+	else if (cur !== null && cur !== record.sha256) action = 'kept';
+	else action = cur === sha256(content) ? 'current' : 'write';
+	return { action, record, bytes: action === 'kept' ? readFileSync(path) : content };
 }
 
 // Place a file whose whole content is ours (an agent, a hook file, the sheet,
-// a license copy, the plugin's copy), as ownedFileAction says.
-export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }) {
+// a license copy, the plugin's copy), as ownedFileAction says (or said, when
+// the caller planned with it).
+export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }, planned = ownedFileAction(m, { path, content })) {
+	const { action, record, bytes } = planned;
 	const want = sha256(content);
-	const action = ownedFileAction(m, { path, content });
-	if (action === 'kept' && fileSha(path) !== want) report.warn(`${path} was modified since install — left as is`);
+	if (action === 'kept' && sha256(bytes) !== want) report.warn(`${path} was modified since install — left as is`);
 	if (action === 'kept' || action === 'current') return;
 	if (action === 'replace') {
 		backupOnce(ctx, m, path, { keepLink: true });
 		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
 	}
 	writeAtomic(path, content, { mode });
-	const rec = ownedFile(m, path);
-	if (rec) rec.sha256 = want;
+	if (record) record.sha256 = want;
 	else add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: action === 'replace' }));
 }
 
@@ -491,31 +495,6 @@ export function run(ctx, cmd, args, { cwd, capture = false, env = {} } = {}) {
 		stdio: capture ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
 	});
 	return { status: r.error ? 127 : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
-
-// The daemon's plugin registrations as { id, path, status }, or null when the
-// daemon does not answer (`paseo plugin ls --json`). `path` is the directory
-// as registered (path.resolve'd, not real-pathed). `status` is one of
-// running | failed | disabled (Paseo's resolvePluginStatus): disabled means
-// the plugin, or all plugins, are switched off, and Paseo then refuses to
-// reload it; failed means its build or start failed, and it stays registered.
-export function paseoPlugins(ctx) {
-	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
-	if (r.status !== 0) return null;
-	try {
-		const list = JSON.parse(r.stdout);
-		return Array.isArray(list) ? list.map(({ id, path, status }) => ({ id, path, status })) : null;
-	} catch {
-		return null;
-	}
-}
-
-// A plugin's registration, if Paseo has one under its id, with `ours` when it
-// is from the given copy: Paseo keeps a plugin whose build failed registered,
-// so ownership is by path, and one from anywhere else is not ours.
-export function registrationOf(plugins, { id, path }) {
-	const r = plugins.find((p) => p.id === id);
-	return r ? { ...r, ours: r.path === path } : null;
 }
 
 export const skillsCli = (ctx, args) => run(ctx, 'npx', ['--yes', SKILLS_CLI, ...args], { env: { DISABLE_TELEMETRY: '1' } });

@@ -86,6 +86,11 @@ export const drop = (m, item) => {
 };
 // Add an item unless one of the same kind already matches `pred`.
 export const ensure = (m, item, pred) => first(m, item.kind, pred) ?? add(m, item);
+// Put a new item where an old one was.
+export const replace = (m, old, item) => {
+	m.items[m.items.indexOf(old)] = item;
+	return item;
+};
 
 // --- item constructors ----------------------------------------------------------------
 
@@ -100,7 +105,7 @@ export const ownedFileItem = ({ kind = 'file', name, path, sha256, existedBefore
 export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind: 'file', path, shared: true, format, existedBefore });
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
-export const pluginItem = (id, path) => ({ kind: 'plugin', id, path });
+export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
 export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
 export const dirItem = (path) => ({ kind: 'dir', path });
 export const beadsDbItem = (path) => ({ kind: 'beads-db', path });

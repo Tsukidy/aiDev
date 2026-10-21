@@ -25,19 +25,17 @@ import {
 	insideHome,
 	loadManifest,
 	makeReport,
-	paseoPlugins,
 	parseFlags,
 	readSkillsLock,
-	registrationOf,
 	removeEmptyDir,
 	resolveContext,
-	run,
 	saveManifest,
 	skillsCli,
 	reverseOwnedFile,
 	reverseSharedFile,
 } from './lib/aidev-install.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
+import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
 import { targetByName } from './lib/targets.mjs';
 
 const report = makeReport('uninstall');
@@ -57,7 +55,7 @@ const keep = (note) => note && kept.push(note);
 const owned = ownedFiles(m);
 const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
-const recordedPlugins = items(m, 'plugin');
+const plugin = onboardingPlugin(ctx);
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -67,11 +65,7 @@ for (const i of m.items) {
 	}
 }
 if (items(m, 'skill').length && !findOnPath('npx', ctx.env)) report.error('npx not found on PATH — needed to remove the skills through the skills CLI');
-let plugins = null;
-if (recordedPlugins.length) {
-	if (!findOnPath('paseo', ctx.env)) report.error('paseo not found on PATH — needed to remove the onboarding plugin');
-	else if (!flags['dry-run'] && (plugins = paseoPlugins(ctx)) === null) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
-}
+plugin.reversePreconditions(m, report, flags['dry-run']);
 if (report.errors.length) report.die('nothing touched');
 
 if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
@@ -85,7 +79,7 @@ if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
 if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
-		...recordedPlugins.map((p) => `paseo plugin remove ${p.id}, if Paseo lists it from ${p.path}`),
+		...plugin.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -104,15 +98,7 @@ const fail = (msg) => {
 
 // --- the onboarding plugin, before its source copy goes -------------------------------
 
-// Only a registration from the recorded copy is ours; the record goes once
-// that registration is gone, or Paseo has none.
-for (const p of recordedPlugins) {
-	if (registrationOf(plugins, p)?.ours) {
-		const r = run(ctx, 'paseo', ['plugin', 'remove', p.id]);
-		if (r.status !== 0) fail(`paseo plugin remove ${p.id} failed (exit ${r.status})`);
-	}
-	drop(m, p);
-}
+plugin.reverse(m, fail);
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------

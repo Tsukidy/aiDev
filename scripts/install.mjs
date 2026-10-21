@@ -28,7 +28,7 @@
 // after the exclude list changes (what is no longer wanted comes back out).
 
 import { readFileSync, readdirSync, rmSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import {
 	BEADS_CREATED_NAMES,
 	ONBOARDING_PLUGIN_DIR,
@@ -47,39 +47,26 @@ import {
 	missingDirs,
 	nodeVersionOk,
 	noteSharedFile,
-	ownedFileAction,
-	paseoPlugins,
 	parseFlags,
 	placeOwnedFile,
 	readExcludeList,
 	readText,
-	registrationOf,
 	repoCommit,
 	repoSkills,
 	resolveContext,
 	resolveMateHome,
 	run,
 	saveManifest,
-	sha256,
 	skillDependencies,
 } from './lib/aidev-install.mjs';
-import { add, backupOf, beadsDbItem, dirItem, drop, ensure, first, items, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
+import { add, backupOf, beadsDbItem, dirItem, drop, ensure, markedBlockItem, newManifest, sharedFile } from './lib/manifest.mjs';
+import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
 import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
 const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'install');
 const ctx = resolveContext(process.env);
-// The onboarding plugin, registered from a copy under the data directory so
-// the daemon never depends on where this checkout lives. The copy holds the
-// files its package.json lists; the daemon builds it from them where the copy
-// lies, on every load, and its source imports only what the host supplies, so
-// nothing is installed beside them (#33).
-const pluginId = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'paseo-plugin.json'), 'utf8')).id;
-const plugin = { id: pluginId, path: join(ctx.dataDir, 'paseo-plugins', pluginId) };
-const pluginFiles = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'package.json'), 'utf8')).files.map((f) => ({
-	path: join(plugin.path, f),
-	content: readFileSync(join(ONBOARDING_PLUGIN_DIR, f)),
-}));
+const plugin = onboardingPlugin(ctx);
 const ORDERS = [
 	{ script: join(REPO, 'scripts', 'install-standing-orders.sh'), block: 'aidev-standing-orders' },
 	{ script: join(ONBOARDING_PLUGIN_DIR, 'install-captain-orders.sh'), block: 'paseo-beads-onboarding', beads: true },
@@ -121,6 +108,14 @@ for (const o of ORDERS) {
 	}
 }
 
+let m;
+try {
+	m = loadManifest(ctx);
+} catch (e) {
+	report.error(e.message);
+}
+plugin.preconditions(m, report);
+
 const targets = installTargets(ctx);
 const licenseFiles = readdirSync(SKILLS_SRC)
 	.filter((f) => /^(LICENSE.*|NOTICE.*\.md|pstack-provenance\.json)$/.test(f))
@@ -133,7 +128,7 @@ const written = [
 	ctx.manifestPath,
 	join(ctx.backupsDir, 'x'),
 	...licenseFiles.map((f) => f.dest),
-	...pluginFiles.map((f) => f.path),
+	...plugin.paths(),
 	...targets.flatMap((t) => t.paths()),
 	...(mateHome ? [mateHome, captain] : []),
 ];
@@ -141,12 +136,6 @@ for (const p of written) {
 	if (!insideHome(ctx, p)) report.error(`refusing to write outside HOME (${ctx.home}): ${p}`);
 }
 for (const t of targets) t.preconditions(report);
-
-let plugins = null;
-if (findOnPath('paseo', ctx.env)) {
-	plugins = paseoPlugins(ctx);
-	if (!plugins) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
-}
 
 // The exclude list (operator-owned, never written by us) and the dependency
 // guard: dropping a skill that installed code imports is refused.
@@ -160,16 +149,6 @@ for (const dep of skillDependencies()) {
 	else report.warn(`excluding ${dep.to} leaves a dangling link in ${dep.from} (${dep.file})`);
 }
 
-let m;
-try {
-	m = loadManifest(ctx);
-} catch (e) {
-	report.error(e.message);
-}
-// Our plugin registered from a copy an earlier install recorded elsewhere: the
-// data directory moved, and a new copy would orphan that registration.
-const moved = m && plugins && items(m, 'plugin', (i) => i.id === plugin.id && i.path !== plugin.path && registrationOf(plugins, i)?.ours)[0];
-if (moved) report.error(`plugin ${plugin.id} is registered from ${moved.path}, which an earlier install recorded, but the data directory is now ${ctx.dataDir} — run uninstall first, then install`);
 if (report.errors.length) report.die(`${report.errors.length} precondition(s) failed — nothing was written`);
 
 const commit = repoCommit();
@@ -185,27 +164,14 @@ const plans = targets.map((t) => {
 	}
 	return plan;
 });
-// The copy's build inputs (all but its documentation) as placing them will
-// leave them, hashed: what the daemon builds when it next loads the plugin.
-// The build is stale until a successful install or reload records this hash.
-const buildSha256 = sha256(
-	pluginFiles
-		.filter((f) => !f.path.endsWith('.md'))
-		.map((f) => `${basename(f.path)} ${sha256(ownedFileAction(m, f) === 'kept' ? readFileSync(f.path) : f.content)}\n`)
-		.join(''),
-);
-const record = first(m, 'plugin', (i) => i.id === plugin.id && i.path === plugin.path);
-const step = pluginStep(registrationOf(plugins, plugin), record?.buildSha256 !== buildSha256);
-const stepLine = step.foreign
-	? `plugin ${plugin.id} is registered from ${step.foreign}, not this installer's copy — left as is`
-	: `plugin ${plugin.id}: copy to ${plugin.path}, then ${step.call ? `paseo plugin ${step.call.join(' ')}` : `no daemon call (Paseo reports it ${step.status})`}`;
+const pluginPlan = plugin.plan(m);
 
 if (flags['dry-run']) {
 	const plan = [
 		...targets.flatMap((t, i) => t.describe(plans[i])),
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
 		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
-		stepLine,
+		plugin.describe(pluginPlan),
 		`manifest ${ctx.manifestPath}`,
 	];
 	console.log('install --dry-run: nothing written. The plan:');
@@ -276,30 +242,7 @@ else if (freshBackup && backupOf(m, captain)) {
 if (report.errors.length) finish(1);
 
 // Step 8b: the onboarding plugin.
-report.say(stepLine);
-if (!step.foreign) {
-	// Recorded, and checkpointed, before the daemon is asked: a failed build
-	// leaves the plugin registered, and the call can be interrupted.
-	const item = record ?? add(m, pluginItem(plugin.id, plugin.path));
-	for (const f of pluginFiles) placeOwnedFile(ctx, m, report, f);
-	checkpoint();
-	if (step.call) {
-		const r = run(ctx, 'paseo', ['plugin', ...step.call]);
-		if (r.status !== 0) {
-			report.error(`paseo plugin ${step.call.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows why; re-run to retry`);
-			finish(1);
-		}
-		item.buildSha256 = buildSha256;
-	}
-}
+plugin.install(m, pluginPlan, report, checkpoint);
+if (report.errors.length) finish(1);
 
 finish(0);
-
-// The one daemon call our plugin needs, given its registration (if any) and
-// whether its build is stale.
-function pluginStep(registration, stale) {
-	if (!registration) return { call: ['install', plugin.path] };
-	if (!registration.ours) return { foreign: registration.path };
-	if (registration.status === 'failed' || (registration.status === 'running' && stale)) return { call: ['reload', plugin.id] };
-	return { call: null, status: registration.status };
-}
