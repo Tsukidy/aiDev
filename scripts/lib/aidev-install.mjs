@@ -296,30 +296,34 @@ export function backupOnce(ctx, m, path, { keepLink = false } = {}) {
 	add(m, backupItem(path, dest, fileSha(dest)));
 }
 
-// Place a file whose whole content is ours (an agent, a hook file, the sheet,
-// a license copy). A file recorded as ours is refreshed only while it still
-// holds what we wrote; a pre-existing file of the same name is backed up
-// first and restored at uninstall. Returns whether the file changed.
-export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }) {
-	const want = sha256(content);
+// What placing a file whose whole content is ours does to it: `current` (it
+// already holds the content), `write` (absent, or ours and unedited since we
+// wrote it), `replace` (someone else's file: backed up, then replaced, and
+// restored at uninstall), or `kept` (ours, but edited since: left as is).
+// Pure, so a plan reads exactly what placeOwnedFile then does.
+export function ownedFileAction(m, { path, content }) {
 	const rec = ownedFile(m, path);
 	const cur = fileSha(path);
-	if (rec) {
-		if (cur !== null && cur !== rec.sha256) {
-			if (cur !== want) report.warn(`${path} was modified since install — left as is`);
-			return false;
-		}
-		if (cur !== want) writeAtomic(path, content, { mode });
-		rec.sha256 = want;
-		return cur !== want;
-	}
-	if (cur !== null) {
+	if (!rec) return cur === null ? 'write' : 'replace';
+	if (cur !== null && cur !== rec.sha256) return 'kept';
+	return cur === sha256(content) ? 'current' : 'write';
+}
+
+// Place a file whose whole content is ours (an agent, a hook file, the sheet,
+// a license copy, the plugin's copy), as ownedFileAction says.
+export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }) {
+	const want = sha256(content);
+	const action = ownedFileAction(m, { path, content });
+	if (action === 'kept' && fileSha(path) !== want) report.warn(`${path} was modified since install — left as is`);
+	if (action === 'kept' || action === 'current') return;
+	if (action === 'replace') {
 		backupOnce(ctx, m, path, { keepLink: true });
 		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
 	}
 	writeAtomic(path, content, { mode });
-	add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: cur !== null }));
-	return true;
+	const rec = ownedFile(m, path);
+	if (rec) rec.sha256 = want;
+	else add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: action === 'replace' }));
 }
 
 // Take back a file placed by placeOwnedFile: delete it while it still holds

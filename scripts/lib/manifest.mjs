@@ -12,7 +12,9 @@
 //                 the install put in front of the block)
 //   plugin        a Paseo plugin we register (id) from our copy (path): the one
 //                 record of it, written before the daemon is asked (see
-//                 upgradeUnrecordedPlugin for manifests from before #33)
+//                 upgradeUnrecordedPlugin for manifests from before #33);
+//                 buildSha256 hashes the copy's build inputs as of the
+//                 daemon's last successful install or reload of it
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created

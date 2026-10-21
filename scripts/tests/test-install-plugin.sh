@@ -30,10 +30,21 @@ set_plugin_status() { # set_plugin_status <sb> <status>  — what the stub daemo
 	json_edit "$1/state/paseo-plugins.json" "(list) => { for (const p of list) p.status = '$2'; }"
 }
 
-# The copy holds an older version of one of its files, as after a repo update.
-age_copy() { # age_copy <sb>
+# The copy holds an older README, as before a repo update that changed only it.
+age_readme() { # age_readme <sb>
 	printf 'an older README\n' >"$(plugin_copy "$1")/README.md"
 	record_as_ours "$1" "$(plugin_copy "$1")/README.md"
+}
+
+# The daemon last built an older version of the plugin, as before a repo
+# update: a build input of the copy holds older content, recorded as ours,
+# and the stored build state is that older build's.
+age_build() { # age_build <sb>
+	local f
+	f=$(plugin_copy "$1")/index.server.ts
+	printf '// an older build\n' >>"$f"
+	record_as_ours "$1" "$f"
+	json_edit "$(manifest_of "$1")" "(m) => { m.items.find((i) => i.kind === 'plugin').buildSha256 = 'the-older-build'; }"
 }
 
 # What the #21 installer left on the operator machine (after an install here):
@@ -109,19 +120,56 @@ check "uninstall over an unrecorded failed registration exits 0" test $? -eq 0
 check "uninstall removes the unrecorded registration from our copy" plugin_status_is "$sb" ""
 check "uninstall over an unrecorded failed registration restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-# --- a running plugin whose copy is out of date is reloaded; the dry run names it ----------
+# --- a running plugin whose build is out of date is reloaded; the dry run names it ---------
 
 sb=$(new_sandbox plugin-changed)
 install_in "$sb"
-age_copy "$sb"
+age_build "$sb"
 : >"$sb/stub.log"
 install_in "$sb" --dry-run
 check "the dry run names the reload the run makes" out_has "$sb" "then paseo plugin reload $plugin_id"
 install_in "$sb"
-check "re-running over an out-of-date copy exits 0" test $? -eq 0
-check "a running plugin whose copy changed is reloaded" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
-check "the out-of-date copy is current again" cmp -s "$plugin_src/README.md" "$(plugin_copy "$sb")/README.md"
+check "re-running over an out-of-date build exits 0" test $? -eq 0
+check "a running plugin whose build is out of date is reloaded" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
+check "the out-of-date copy is current again" cmp -s "$plugin_src/index.server.ts" "$(plugin_copy "$sb")/index.server.ts"
 check "the reloaded plugin is running" plugin_status_is "$sb" running
+
+# --- a reload that fails is retried by the next run ------------------------------------------
+
+sb=$(new_sandbox plugin-reload-fails)
+install_in "$sb"
+age_build "$sb"
+run_in "$sb" full STUB_FAIL=paseo-reload -- "$installer"
+check "a failing reload makes the install exit nonzero" test $? -ne 0
+: >"$sb/stub.log"
+install_in "$sb"
+check "the run after a failed reload exits 0" test $? -eq 0
+check "the run after a failed reload retries it" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
+check "the retried plugin is running" plugin_status_is "$sb" running
+
+# --- a change to the copy's README alone does not restart the plugin -------------------------
+
+sb=$(new_sandbox plugin-readme)
+install_in "$sb"
+age_readme "$sb"
+: >"$sb/stub.log"
+install_in "$sb"
+check "re-running over a README-only change exits 0" test $? -eq 0
+check "a README-only change makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "the README is current again" cmp -s "$plugin_src/README.md" "$(plugin_copy "$sb")/README.md"
+
+# --- an operator's edit of the copy reloads the plugin once, not on every run ----------------
+
+sb=$(new_sandbox plugin-edited)
+install_in "$sb"
+printf '// the operator was here\n' >>"$(plugin_copy "$sb")/index.server.ts"
+: >"$sb/stub.log"
+install_in "$sb"
+first=$?
+install_in "$sb"
+check "two runs over an operator-edited copy exit 0" test "$first$?" = 00
+check "an operator-edited copy is reloaded once over two runs" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
+check "the operator's edit is kept" grep -qF 'the operator was here' "$(plugin_copy "$sb")/index.server.ts"
 
 # --- a plugin disabled in Paseo stays disabled; its copy is still refreshed -----------------
 #
@@ -129,13 +177,13 @@ check "the reloaded plugin is running" plugin_status_is "$sb" running
 
 sb=$(new_sandbox plugin-disabled)
 install_in "$sb"
-age_copy "$sb"
+age_build "$sb"
 set_plugin_status "$sb" disabled
 : >"$sb/stub.log"
 install_in "$sb"
 check "re-running with the plugin disabled in Paseo exits 0" test $? -eq 0
 check "a disabled plugin is neither reloaded nor reinstalled" test -z "$(plugin_calls "$sb")"
-check "a disabled plugin's copy is refreshed" cmp -s "$plugin_src/README.md" "$(plugin_copy "$sb")/README.md"
+check "a disabled plugin's copy is refreshed" cmp -s "$plugin_src/index.server.ts" "$(plugin_copy "$sb")/index.server.ts"
 check "a disabled plugin stays disabled" plugin_status_is "$sb" disabled
 
 # --- a plugin of that id registered from anywhere else is not ours ---------------------------

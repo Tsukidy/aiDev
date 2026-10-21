@@ -28,7 +28,7 @@
 // after the exclude list changes (what is no longer wanted comes back out).
 
 import { readFileSync, readdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
 	BEADS_CREATED_NAMES,
 	ONBOARDING_PLUGIN_DIR,
@@ -37,7 +37,6 @@ import {
 	backupOnce,
 	blockRange,
 	countLines,
-	fileSha,
 	findOnPath,
 	insideHome,
 	isDir,
@@ -48,6 +47,7 @@ import {
 	missingDirs,
 	nodeVersionOk,
 	noteSharedFile,
+	ownedFileAction,
 	paseoPlugins,
 	parseFlags,
 	placeOwnedFile,
@@ -63,7 +63,7 @@ import {
 	sha256,
 	skillDependencies,
 } from './lib/aidev-install.mjs';
-import { add, backupOf, beadsDbItem, dirItem, drop, ensure, items, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
+import { add, backupOf, beadsDbItem, dirItem, drop, ensure, first, items, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
 import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
@@ -184,7 +184,17 @@ const plans = targets.map((t) => {
 	}
 	return plan;
 });
-const step = pluginStep(registrationOf(plugins, plugin), pluginFiles.some((f) => fileSha(f.path) !== sha256(f.content)));
+// The copy's build inputs (all but its documentation) as placing them will
+// leave them, hashed: what the daemon builds when it next loads the plugin.
+// The build is stale until a successful install or reload records this hash.
+const buildSha256 = sha256(
+	pluginFiles
+		.filter((f) => !f.path.endsWith('.md'))
+		.map((f) => `${basename(f.path)} ${sha256(ownedFileAction(m, f) === 'kept' ? readFileSync(f.path) : f.content)}\n`)
+		.join(''),
+);
+const record = first(m, 'plugin', (i) => i.id === plugin.id && i.path === plugin.path);
+const step = pluginStep(registrationOf(plugins, plugin), record?.buildSha256 !== buildSha256);
 const stepLine = step.foreign
 	? `plugin ${plugin.id} is registered from ${step.foreign}, not this installer's copy — left as is`
 	: `plugin ${plugin.id}: copy to ${plugin.path}, then ${step.call ? `paseo plugin ${step.call.join(' ')}` : `no daemon call (Paseo reports it ${step.status})`}`;
@@ -264,7 +274,7 @@ report.say(stepLine);
 if (!step.foreign) {
 	// Recorded, and saved, before the daemon is asked: a failed build leaves
 	// the plugin registered.
-	ensure(m, pluginItem(plugin.id, plugin.path), (i) => i.id === plugin.id && i.path === plugin.path);
+	const item = record ?? add(m, pluginItem(plugin.id, plugin.path));
 	for (const f of pluginFiles) placeOwnedFile(ctx, m, report, f);
 	saveManifest(ctx, m);
 	if (step.call) {
@@ -273,6 +283,7 @@ if (!step.foreign) {
 			report.error(`paseo plugin ${step.call.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows why; re-run to retry`);
 			finish(1);
 		}
+		item.buildSha256 = buildSha256;
 	}
 }
 
