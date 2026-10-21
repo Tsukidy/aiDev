@@ -489,8 +489,8 @@ export function run(ctx, cmd, args, { cwd, capture = false, env = {} } = {}) {
 	return { status: r.error ? 127 : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
-// The daemon's plugin registrations (`paseo plugin ls --json`: id, path,
-// status), or null when the daemon does not answer. `path` is the directory
+// The daemon's plugin registrations as { id, path, status }, or null when the
+// daemon does not answer (`paseo plugin ls --json`). `path` is the directory
 // as registered (path.resolve'd, not real-pathed). `status` is one of
 // running | failed | disabled (Paseo's resolvePluginStatus): disabled means
 // the plugin, or all plugins, are switched off, and Paseo then refuses to
@@ -500,25 +500,19 @@ export function paseoPlugins(ctx) {
 	if (r.status !== 0) return null;
 	try {
 		const list = JSON.parse(r.stdout);
-		return Array.isArray(list) ? list : null;
+		return Array.isArray(list) ? list.map(({ id, path, status }) => ({ id, path, status })) : null;
 	} catch {
 		return null;
 	}
 }
 
-// The beads onboarding plugin: its id, and the copy install registers with
-// Paseo, under the data directory, so the daemon never depends on where this
-// checkout lives or which branch it is on.
-export function onboardingPlugin(ctx) {
-	const id = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'paseo-plugin.json'), 'utf8')).id;
-	return { id, copy: join(ctx.dataDir, 'paseo-plugins', id) };
+// A plugin's registration, if Paseo has one under its id, with `ours` when it
+// is from the given copy: Paseo keeps a plugin whose build failed registered,
+// so ownership is by path, and one from anywhere else is not ours.
+export function registrationOf(plugins, { id, path }) {
+	const r = plugins.find((p) => p.id === id);
+	return r ? { ...r, ours: r.path === path } : null;
 }
-
-// Our registration of a plugin: the one Paseo lists under its id from our
-// copy. Ownership is by path, not by the manifest, because Paseo keeps a
-// plugin whose build failed registered: an install that stopped there left a
-// registration it never recorded, and it is still ours to reload or remove.
-export const ourRegistration = (plugins, { id, copy }) => plugins.find((p) => p.id === id && p.path === copy);
 
 export const skillsCli = (ctx, args) => run(ctx, 'npx', ['--yes', SKILLS_CLI, ...args], { env: { DISABLE_TELEMETRY: '1' } });
 

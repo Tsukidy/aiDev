@@ -10,8 +10,9 @@
 //   hook-entry    our entry in a shared settings file (target, event, marker)
 //   marked-block  our marked block in a shared text file (id, before: the text
 //                 the install put in front of the block)
-//   plugin        a Paseo plugin we register (id) from our copy (path); recorded
-//                 before the daemon is asked
+//   plugin        a Paseo plugin we register (id) from our copy (path): the one
+//                 record of it, written before the daemon is asked (see
+//                 upgradeUnrecordedPlugin for manifests from before #33)
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created
@@ -21,6 +22,7 @@
 // `existedBefore` on a file says whether it was there before the install.
 
 import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 
 export const SCHEMA_VERSION = 1;
 export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'backup', 'dir', 'beads-db', 'skills-lock'];
@@ -35,6 +37,23 @@ export function readManifest(path) {
 	if (m.schemaVersion !== SCHEMA_VERSION || !Array.isArray(m.items)) {
 		throw new Error(`unsupported manifest at ${path} (schemaVersion ${m.schemaVersion})`);
 	}
+	return upgradeUnrecordedPlugin(m);
+}
+
+// The one upgrade. Before #33, an install that failed at `paseo plugin
+// install` recorded the plugin's copy (its paseo-plugin.json among the files
+// whose whole content is ours) but no plugin item, though Paseo kept the
+// plugin registered from the copy. The item is rebuilt from the copy, with the
+// id its recorded paseo-plugin.json declares, so the plugin item stays the one
+// record install and uninstall act on.
+function upgradeUnrecordedPlugin(m) {
+	if (items(m, 'plugin').length) return m;
+	const declared = ownedFiles(m).find((i) => basename(i.path) === 'paseo-plugin.json');
+	let id;
+	try {
+		id = declared && JSON.parse(readFileSync(declared.path, 'utf8')).id;
+	} catch {}
+	if (typeof id === 'string') add(m, pluginItem(id, dirname(declared.path)));
 	return m;
 }
 

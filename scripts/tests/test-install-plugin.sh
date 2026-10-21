@@ -61,6 +61,7 @@ install_in "$sb"
 run_in "$sb" full STUB_FAIL=paseo-remove -- "$uninstaller"
 check "a failed plugin removal makes uninstall exit nonzero" test $? -ne 0
 check "the plugin's source copy is still there for the daemon" test -f "$(plugin_copy "$sb")/index.server.ts"
+check "the plugin stays recorded until its registration is gone" plugin_recorded "$sb"
 uninstall_in "$sb" --purge --yes
 check "a later uninstall finishes the job" test ! -e "$(manifest_of "$sb")"
 
@@ -146,5 +147,30 @@ check "install with the plugin registered from elsewhere exits 0" test $? -eq 0
 uninstall_in "$sb" --purge --yes
 check "install and uninstall leave a plugin registered from elsewhere alone" test -z "$(plugin_calls "$sb")"
 check "the plugin registered from elsewhere is still there" plugin_status_is "$sb" running
+
+# ...also when the manifest records our copy, as when the operator re-registered the id.
+sb=$(new_sandbox plugin-foreign-recorded)
+install_in "$sb"
+json_edit "$sb/state/paseo-plugins.json" '(list) => { for (const p of list) p.path = "/opt/elsewhere"; }'
+: >"$sb/stub.log"
+install_in "$sb"
+check "install with our recorded plugin re-registered from elsewhere exits 0" test $? -eq 0
+uninstall_in "$sb" --purge --yes
+check "uninstall with our recorded plugin re-registered from elsewhere exits 0" test $? -eq 0
+check "install and uninstall leave that registration alone" test -z "$(plugin_calls "$sb")"
+check "that registration is still there" plugin_status_is "$sb" running
+
+# --- a registration recorded from a copy that has since moved is never orphaned --------------
+
+sb=$(new_sandbox plugin-moved)
+install_in "$sb"
+snap=$(snapshot "$sb/home")
+: >"$sb/stub.log"
+run_in "$sb" full XDG_DATA_HOME="$sb/home/.local/share-moved" -- "$installer"
+check "install refuses when the copy its recorded registration is from has moved" test $? -ne 0
+check "the refusal says to run uninstall first" out_has "$sb" "run uninstall first"
+check "the refusal writes nothing" test "$(snapshot "$sb/home")" = "$snap"
+check "the refusal calls no mutating CLI" no_mutating_calls "$sb"
+check "the registration from the moved copy is left in place" plugin_status_is "$sb" running
 
 summary

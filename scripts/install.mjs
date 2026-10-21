@@ -48,13 +48,12 @@ import {
 	missingDirs,
 	nodeVersionOk,
 	noteSharedFile,
-	onboardingPlugin,
-	ourRegistration,
 	paseoPlugins,
 	parseFlags,
 	placeOwnedFile,
 	readExcludeList,
 	readText,
+	registrationOf,
 	repoCommit,
 	repoSkills,
 	resolveContext,
@@ -64,18 +63,20 @@ import {
 	sha256,
 	skillDependencies,
 } from './lib/aidev-install.mjs';
-import { add, backupOf, beadsDbItem, dirItem, drop, ensure, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
+import { add, backupOf, beadsDbItem, dirItem, drop, ensure, items, markedBlockItem, newManifest, pluginItem, sharedFile } from './lib/manifest.mjs';
 import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
 const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'install');
 const ctx = resolveContext(process.env);
-const plugin = onboardingPlugin(ctx);
-// The daemon builds the plugin from these, where the copy lies, on every load;
-// its source imports only what the host supplies, so nothing is installed
-// beside them (#33).
+// The onboarding plugin, registered from a copy under the data directory so
+// the daemon never depends on where this checkout lives. The daemon builds it
+// from these files where the copy lies, on every load; its source imports only
+// what the host supplies, so nothing is installed beside them (#33).
+const pluginId = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'paseo-plugin.json'), 'utf8')).id;
+const plugin = { id: pluginId, path: join(ctx.dataDir, 'paseo-plugins', pluginId) };
 const pluginFiles = ['index.server.ts', 'paseo-plugin.json', 'package.json', 'tsconfig.json', 'README.md'].map((f) => ({
-	path: join(plugin.copy, f),
+	path: join(plugin.path, f),
 	content: readFileSync(join(ONBOARDING_PLUGIN_DIR, f)),
 }));
 const ORDERS = [
@@ -164,6 +165,10 @@ try {
 } catch (e) {
 	report.error(e.message);
 }
+// Our plugin registered from a copy an earlier install recorded elsewhere: the
+// data directory moved, and a new copy would orphan that registration.
+const moved = m && plugins && items(m, 'plugin', (i) => i.id === plugin.id && i.path !== plugin.path && registrationOf(plugins, i)?.ours)[0];
+if (moved) report.error(`plugin ${plugin.id} is registered from ${moved.path}, which an earlier install recorded, but the data directory is now ${ctx.dataDir} — run uninstall first, then install`);
 if (report.errors.length) report.die(`${report.errors.length} precondition(s) failed — nothing was written`);
 
 const commit = repoCommit();
@@ -179,31 +184,17 @@ const plans = targets.map((t) => {
 	}
 	return plan;
 });
-// Step 8b's one daemon call, derived here for the plan and the run alike:
-// install the plugin when Paseo does not have it; reload ours (lib:
-// ourRegistration) when it failed, or when it runs from an out-of-date copy;
-// nothing when it is current or disabled (Paseo refuses to reload a disabled
-// plugin and builds the copy when it is enabled). A registration of the id
-// from anywhere else is not ours and is left alone.
-const registered = plugins.find((p) => p.id === plugin.id);
-const ours = ourRegistration(plugins, plugin);
-const foreign = Boolean(registered) && !ours;
-const copyChanged = pluginFiles.some((f) => fileSha(f.path) !== sha256(f.content));
-const pluginCall = !registered
-	? ['install', plugin.copy]
-	: ours?.status === 'failed' || (ours?.status === 'running' && copyChanged)
-		? ['reload', plugin.id]
-		: null;
-const pluginPlan = foreign
-	? `plugin ${plugin.id} is registered from ${registered.path}, not this installer's copy — left as is`
-	: `plugin ${plugin.id}: copy to ${plugin.copy}, then ${pluginCall ? `paseo plugin ${pluginCall.join(' ')}` : `no daemon call (Paseo reports it ${ours.status})`}`;
+const step = pluginStep(registrationOf(plugins, plugin), pluginFiles.some((f) => fileSha(f.path) !== sha256(f.content)));
+const stepLine = step.foreign
+	? `plugin ${plugin.id} is registered from ${step.foreign}, not this installer's copy — left as is`
+	: `plugin ${plugin.id}: copy to ${plugin.path}, then ${step.call ? `paseo plugin ${step.call.join(' ')}` : `no daemon call (Paseo reports it ${step.status})`}`;
 
 if (flags['dry-run']) {
 	const plan = [
 		...targets.flatMap((t, i) => t.describe(plans[i])),
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
 		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
-		pluginPlan,
+		stepLine,
 		`manifest ${ctx.manifestPath}`,
 	];
 	console.log('install --dry-run: nothing written. The plan:');
@@ -268,21 +259,30 @@ else if (freshBackup && backupOf(m, captain)) {
 }
 if (report.errors.length) finish(1);
 
-// Step 8b: the onboarding plugin, from its copy, with the call derived above.
-report.say(pluginPlan);
-if (!foreign) {
+// Step 8b: the onboarding plugin.
+report.say(stepLine);
+if (!step.foreign) {
 	// Recorded, and saved, before the daemon is asked: a failed build leaves
 	// the plugin registered.
-	ensure(m, pluginItem(plugin.id, plugin.copy), (i) => i.id === plugin.id && i.path === plugin.copy);
+	ensure(m, pluginItem(plugin.id, plugin.path), (i) => i.id === plugin.id && i.path === plugin.path);
 	for (const f of pluginFiles) placeOwnedFile(ctx, m, report, f);
 	saveManifest(ctx, m);
-	if (pluginCall) {
-		const r = run(ctx, 'paseo', ['plugin', ...pluginCall]);
+	if (step.call) {
+		const r = run(ctx, 'paseo', ['plugin', ...step.call]);
 		if (r.status !== 0) {
-			report.error(`paseo plugin ${pluginCall.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows why; re-run to retry`);
+			report.error(`paseo plugin ${step.call.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows why; re-run to retry`);
 			finish(1);
 		}
 	}
 }
 
 finish(0);
+
+// The one daemon call our plugin needs, given its registration (if any) and
+// whether its build is stale.
+function pluginStep(registration, stale) {
+	if (!registration) return { call: ['install', plugin.path] };
+	if (!registration.ours) return { foreign: registration.path };
+	if (registration.status === 'failed' || (registration.status === 'running' && stale)) return { call: ['reload', plugin.id] };
+	return { call: null, status: registration.status };
+}
