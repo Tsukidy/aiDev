@@ -5,6 +5,12 @@
   "license": "MIT",
   "private": true,
   "type": "module",
+  "files": [
+    "index.server.ts",
+    "paseo-plugin.json",
+    "package.json",
+    "tsconfig.json"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bash tests/run.sh"

@@ -6,15 +6,16 @@
 //   node scripts/uninstall.mjs [--dry-run] [--purge [--yes]]
 //
 // No manifest → refuses, nothing touched. Otherwise, in order: the onboarding
-// plugin (while its source copy still exists), the skills (through the skills
-// CLI, per runtime target), every file whose whole content is ours (each only
-// while it still holds what was installed; an edited one, like a tuned model
-// sheet, is kept and reported; a replaced operator file comes back), our
-// parts of shared files (the hook entry in settings.json, the marked blocks
-// in CLAUDE.md and captain.md; when the result equals the pre-install backup,
-// the backup's exact bytes come back), and the directories the install
-// created, if empty. Beads databases the setup created are kept unless
-// --purge, which asks on a terminal (or takes --yes) before anything is touched.
+// plugin's registration from the recorded copy (while the copy still exists),
+// the skills (through the skills CLI, per runtime target), every file whose
+// whole content is ours (each only while it still holds what was installed;
+// an edited one, like a tuned model sheet, is kept and reported; a replaced
+// operator file comes back), our parts of shared files (the hook entry in
+// settings.json, the marked blocks in CLAUDE.md and captain.md; when the
+// result equals the pre-install backup, the backup's exact bytes come back),
+// and the directories the install created, if empty. Beads databases the
+// setup created are kept unless --purge, which asks on a terminal (or takes
+// --yes) before anything is touched.
 
 import { existsSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
@@ -24,18 +25,17 @@ import {
 	insideHome,
 	loadManifest,
 	makeReport,
-	paseoPluginIds,
 	parseFlags,
 	readSkillsLock,
 	removeEmptyDir,
 	resolveContext,
-	run,
 	saveManifest,
 	skillsCli,
 	reverseOwnedFile,
 	reverseSharedFile,
 } from './lib/aidev-install.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
+import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
 import { targetByName } from './lib/targets.mjs';
 
 const report = makeReport('uninstall');
@@ -55,6 +55,7 @@ const keep = (note) => note && kept.push(note);
 const owned = ownedFiles(m);
 const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
+const plugin = onboardingPlugin(ctx);
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -64,10 +65,7 @@ for (const i of m.items) {
 	}
 }
 if (items(m, 'skill').length && !findOnPath('npx', ctx.env)) report.error('npx not found on PATH — needed to remove the skills through the skills CLI');
-if (items(m, 'plugin').length) {
-	if (!findOnPath('paseo', ctx.env)) report.error('paseo not found on PATH — needed to remove the onboarding plugin');
-	else if (!flags['dry-run'] && paseoPluginIds(ctx) === null) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
-}
+plugin.reversePreconditions(m, report, flags['dry-run']);
 if (report.errors.length) report.die('nothing touched');
 
 if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
@@ -81,7 +79,7 @@ if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
 if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
-		...items(m, 'plugin').map((p) => `paseo plugin remove ${p.id}`),
+		...plugin.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -100,15 +98,7 @@ const fail = (msg) => {
 
 // --- the onboarding plugin, before its source copy goes -------------------------------
 
-for (const p of items(m, 'plugin')) {
-	const ids = paseoPluginIds(ctx);
-	if (ids === null) fail('`paseo plugin ls --json` failed — is the Paseo daemon running?');
-	if (ids.includes(p.id)) {
-		const r = run(ctx, 'paseo', ['plugin', 'remove', p.id]);
-		if (r.status !== 0) fail(`paseo plugin remove ${p.id} failed (exit ${r.status})`);
-	}
-	drop(m, p);
-}
+plugin.reverse(m, fail);
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------

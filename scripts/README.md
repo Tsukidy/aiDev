@@ -7,12 +7,14 @@ they call, and the offline tests for all of it.
 | File | Role |
 | --- | --- |
 | `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
-| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below. |
+| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), and the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`). |
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
+| `lib/onboarding-plugin.mjs` | The beads onboarding plugin step (#33): the copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
-| `tests/test-install.sh` | The installer and uninstaller's stub-driven offline harness, run against sandboxed homes (run directly, or via `tests/run.sh`). |
+| `tests/test-install.sh`, `tests/test-install-plugin.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33). Run directly, or via `tests/run.sh`. |
+| `tests/lib/install-harness.sh`, `tests/lib/cli-stub.mjs` | Their shared harness (sourced): sandboxes, helpers, and the stub CLIs (`npx`, `paseo`, `bd`, `bun`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
 | `tests/test-standing-orders.sh` | That installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
 
@@ -78,9 +80,23 @@ checkout staying where it is.
 8. **The orders and the plugin**: `install-standing-orders.sh` and the beads
    onboarding `install-captain-orders.sh` (each idempotent on its own; the
    latter creates the mate's home memory database with `bd init`), then the
-   beads onboarding plugin, copied under the data directory and installed
-   with `paseo plugin install <copy>` (left alone if it is already installed
-   some other way; reloaded when a re-run changes its source).
+   beads onboarding plugin: the files its `package.json` lists, copied under
+   the data directory and installed with `paseo plugin install <copy>`. The
+   daemon builds a plugin where it lies, on every load, so the copy must
+   build on its own: the plugin's source imports only what the host supplies,
+   which its own tests guard (#33). The plugin is recorded before the daemon
+   is asked, because Paseo keeps a plugin whose build failed registered; the
+   registration from the recorded copy is ours to reload and to remove at
+   uninstall, and one of that id from anywhere else is left alone. A re-run
+   reloads ours when Paseo reports it `failed`, or when it runs and the
+   copy's files, as the run leaves them, differ from what the daemon last
+   built successfully, which the manifest records. So a failed reload is
+   retried, and an operator's edit of the copy reloads it once. A disabled
+   plugin is left disabled, and its copy is still refreshed. A file a
+   pre-#33 copy held that the copy no longer lists (its README.md) is left
+   for uninstall to remove. If the plugin is registered from a copy an earlier
+   install recorded elsewhere (the data directory moved), install refuses:
+   uninstall first. The dry run prints the daemon call the run will make.
 9. **The manifest** (below), plus NOTICE, `pstack-provenance.json` and every
    license file of `skills/`, with the repository's own `LICENSE`, under the
    data directory, so attribution travels with the install.
@@ -127,7 +143,7 @@ excluded skill only warns. A name that is not a skill warns.
 | `<claude>/CLAUDE.md` | the `aidev-pstack-sheet` block | our block removed; the file is deleted if the install created it and nothing else is in it |
 | `<mate>/data/captain.md` | the `aidev-standing-orders` and `paseo-beads-onboarding` blocks (written by the two orders installers) | both blocks and the headings in front of them removed |
 | `<mate>/.beads`, `.beads.gate.lock`, `.git` | the mate's home memory database, when `bd init` created it during install | kept; `--purge` deletes them |
-| `<data>/paseo-plugins/firstmate-beads-onboarding/` | the plugin source copy, registered in Paseo by `paseo plugin install` | `paseo plugin remove`, then the copy is deleted |
+| `<data>/paseo-plugins/firstmate-beads-onboarding/` | the plugin source copy, registered in Paseo by `paseo plugin install` | `paseo plugin remove` (only a registration Paseo lists from this copy; a manifest from before #33 that recorded the copy but no plugin is upgraded to record it), then the copy is deleted |
 | `<data>/licenses/` | NOTICE, provenance manifest, licenses | deleted |
 | `<state>/install-manifest.json` | the manifest | deleted last |
 | `<state>/backups/` | a copy of every pre-existing file the install modified | consumed by uninstall; a backup it cannot restore is kept and reported |
@@ -148,14 +164,19 @@ The npx package cache under `~/.npm` is npm's and is left alone.
 
 ### The manifest
 
-JSON at `<state>/install-manifest.json`: `schemaVersion`, `installedAt` (the
+JSON at `<state>/install-manifest.json`: `schemaVersion` (2), `installedAt` (the
 first install), `repoCommit` (the latest install), and `items`, each with a
 `kind` and a `path`: `skill`, `agent`, `file` (with `sha256` at install time;
 `shared: true` for settings.json, CLAUDE.md and captain.md), `hook-entry`,
 `marked-block` (with the text the install put in front of the block),
-`plugin`, `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
+`plugin` (with `id` and `buildSha256`, the build the daemon last made of the
+copy), `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
 changes nothing leaves it byte-identical. Uninstall with no manifest refuses
-and touches nothing. `lib/manifest.mjs` defines every kind and its fields.
+and touches nothing. `lib/manifest.mjs` defines every kind and its fields,
+and its one upgrade, from version 1: a manifest from before #33 whose
+install failed at the daemon records the plugin's copy but no `plugin` item,
+and reading it adds the item, with the copy directory's name as the id
+(both installers name it after the id); the next save writes version 2.
 
 ### The orders block upgrade story
 
@@ -226,4 +247,6 @@ bash scripts/tests/run.sh                    # everything, offline
 node scripts/verify-curation.mjs             # the curation gate alone
 bash scripts/tests/test-standing-orders.sh   # the orders installer alone
 bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alone
+bash scripts/tests/test-install-plugin.sh    # their onboarding plugin step alone
+node --test scripts/tests/onboarding-plugin.test.mjs   # the plugin step's decision table
 ```

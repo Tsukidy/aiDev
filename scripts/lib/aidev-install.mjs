@@ -296,30 +296,38 @@ export function backupOnce(ctx, m, path, { keepLink = false } = {}) {
 	add(m, backupItem(path, dest, fileSha(dest)));
 }
 
-// Place a file whose whole content is ours (an agent, a hook file, the sheet,
-// a license copy). A file recorded as ours is refreshed only while it still
-// holds what we wrote; a pre-existing file of the same name is backed up
-// first and restored at uninstall. Returns whether the file changed.
-export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }) {
-	const want = sha256(content);
-	const rec = ownedFile(m, path);
+// What placing a file whose whole content is ours will do, read from the
+// manifest and the disk without changing either: `action` is `current` (it
+// already holds the content), `write` (absent, or ours and unedited since we
+// wrote it), `replace` (someone else's file: backed up, then replaced, and
+// restored at uninstall) or `kept` (ours, but edited since: left as is);
+// `record` is its manifest item, if any; `bytes` is what it holds afterwards.
+// A plan reads this, and placeOwnedFile acts on the same result.
+export function ownedFileAction(m, { path, content }) {
+	const record = ownedFile(m, path);
 	const cur = fileSha(path);
-	if (rec) {
-		if (cur !== null && cur !== rec.sha256) {
-			if (cur !== want) report.warn(`${path} was modified since install — left as is`);
-			return false;
-		}
-		if (cur !== want) writeAtomic(path, content, { mode });
-		rec.sha256 = want;
-		return cur !== want;
-	}
-	if (cur !== null) {
+	let action;
+	if (!record) action = cur === null ? 'write' : 'replace';
+	else if (cur !== null && cur !== record.sha256) action = 'kept';
+	else action = cur === sha256(content) ? 'current' : 'write';
+	return { action, record, bytes: action === 'kept' ? readFileSync(path) : content };
+}
+
+// Place a file whose whole content is ours (an agent, a hook file, the sheet,
+// a license copy, the plugin's copy), as ownedFileAction says (or said, when
+// the caller planned with it).
+export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }, planned = ownedFileAction(m, { path, content })) {
+	const { action, record, bytes } = planned;
+	const want = sha256(content);
+	if (action === 'kept' && sha256(bytes) !== want) report.warn(`${path} was modified since install — left as is`);
+	if (action === 'kept' || action === 'current') return;
+	if (action === 'replace') {
 		backupOnce(ctx, m, path, { keepLink: true });
 		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
 	}
 	writeAtomic(path, content, { mode });
-	add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: cur !== null }));
-	return true;
+	if (record) record.sha256 = want;
+	else add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: action === 'replace' }));
 }
 
 // Take back a file placed by placeOwnedFile: delete it while it still holds
@@ -487,17 +495,6 @@ export function run(ctx, cmd, args, { cwd, capture = false, env = {} } = {}) {
 		stdio: capture ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
 	});
 	return { status: r.error ? 127 : r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
-
-export function paseoPluginIds(ctx) {
-	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
-	if (r.status !== 0) return null;
-	try {
-		const list = JSON.parse(r.stdout);
-		return Array.isArray(list) ? list.map((p) => p.id) : null;
-	} catch {
-		return null;
-	}
 }
 
 export const skillsCli = (ctx, args) => run(ctx, 'npx', ['--yes', SKILLS_CLI, ...args], { env: { DISABLE_TELEMETRY: '1' } });

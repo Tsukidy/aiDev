@@ -28,7 +28,7 @@
 //   self-initialize).
 import { execFile } from "node:child_process";
 import type { PluginHookContext, PluginHookWorkspace, PluginServerContext } from "@getpaseo/plugin/server";
-import type { PaseoApi } from "@getpaseo/client";
+type PaseoApi = PluginHookContext["paseo"];
 
 export type WorkspaceCreatedEvent = { workspace: PluginHookWorkspace };
 export type WorkspaceCreatedContext = PluginHookContext;

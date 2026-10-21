@@ -10,7 +10,11 @@
 //   hook-entry    our entry in a shared settings file (target, event, marker)
 //   marked-block  our marked block in a shared text file (id, before: the text
 //                 the install put in front of the block)
-//   plugin        a Paseo plugin we installed (id)
+//   plugin        a Paseo plugin we register (id) from our copy (path): the one
+//                 record of it, written before the daemon is asked (see
+//                 upgradeUnrecordedPlugin for manifests from before #33);
+//                 buildSha256 hashes the copy's build inputs as of the
+//                 daemon's last successful install or reload of it
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created
@@ -20,8 +24,11 @@
 // `existedBefore` on a file says whether it was there before the install.
 
 import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 
-export const SCHEMA_VERSION = 1;
+// 2 since #33: a version-1 manifest is upgraded once on read (below) and
+// saved as version 2 by whichever run writes it next.
+export const SCHEMA_VERSION = 2;
 export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {
@@ -31,10 +38,26 @@ export function newManifest(repoCommit) {
 export function readManifest(path) {
 	if (!existsSync(path)) return null;
 	const m = JSON.parse(readFileSync(path, 'utf8'));
-	if (m.schemaVersion !== SCHEMA_VERSION || !Array.isArray(m.items)) {
+	if (![1, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
 		throw new Error(`unsupported manifest at ${path} (schemaVersion ${m.schemaVersion})`);
 	}
+	if (m.schemaVersion === 1) upgradeUnrecordedPlugin(m);
+	m.schemaVersion = SCHEMA_VERSION;
 	return m;
+}
+
+// The one upgrade, from version 1. Before #33, an install that failed at
+// `paseo plugin install` recorded the plugin's copy (its paseo-plugin.json
+// among the files whose whole content is ours) but no plugin item, though
+// Paseo kept the plugin registered from the copy. The item is rebuilt from the
+// recorded copy directory, whose name is the plugin id: both installers name
+// it so, and uninstall still removes only a registration Paseo lists under
+// that id from that directory. Nothing is read from the copy itself, which may
+// be gone or edited.
+function upgradeUnrecordedPlugin(m) {
+	if (items(m, 'plugin').length) return;
+	const declared = ownedFiles(m).find((i) => basename(i.path) === 'paseo-plugin.json');
+	if (declared) add(m, pluginItem(basename(dirname(declared.path)), dirname(declared.path)));
 }
 
 export const serialize = (m) => JSON.stringify(m, null, 2) + '\n';
@@ -64,6 +87,11 @@ export const drop = (m, item) => {
 };
 // Add an item unless one of the same kind already matches `pred`.
 export const ensure = (m, item, pred) => first(m, item.kind, pred) ?? add(m, item);
+// Put a new item where an old one was.
+export const replace = (m, old, item) => {
+	m.items[m.items.indexOf(old)] = item;
+	return item;
+};
 
 // --- item constructors ----------------------------------------------------------------
 
@@ -78,7 +106,7 @@ export const ownedFileItem = ({ kind = 'file', name, path, sha256, existedBefore
 export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind: 'file', path, shared: true, format, existedBefore });
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
-export const pluginItem = (id, path) => ({ kind: 'plugin', id, path });
+export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
 export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
 export const dirItem = (path) => ({ kind: 'dir', path });
 export const beadsDbItem = (path) => ({ kind: 'beads-db', path });

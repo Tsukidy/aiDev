@@ -16,25 +16,28 @@ and the memory store simply exists.
 | --- | --- |
 | `index.server.ts` + `paseo-plugin.json` | **Paseo daemon plugin** (the deterministic half): subscribes to `workspace.created`, dedups per project, resolves the project's base via the Paseo API's project record (`projectRootPath` — never the event's cwd, which for crewmate worktrees is the worktree), and runs `bd ready` → `bd init --quiet` at the base. Nothing else: no commits, no files beyond what `bd init` itself produces (init commits its own scaffolding — that is what carries the agent-facing files into worktrees and clones). Absent `bd`, a failed check, or a failed init each log a warning (`paseo plugin logs firstmate-beads-onboarding`) and leave the project retryable on its next workspace event. |
 | `install-captain-orders.sh` | **Standing orders** (the behavioral half): appends the marked memory rules block to the mate's `data/captain.md` (never overwritten by the plugin, outranks the charter, read every session) and creates the mate-global memory database in the home (`bd init --quiet --stealth`). Idempotent; resolves the mate's home exactly as firstmate 0.3.4 does (`plugin-data/firstmate/config.json` → `~` expansion → default → legacy `plugins/firstmate/home`) and refuses politely when no home exists. |
-| `tests/run.sh` | Offline verification: 9 handler tests + 21 installer checks (see below). |
-
-Nothing in this directory is installed by this repo. It is delivered for **you**
-to install on the Paseo daemon machine; agents never write there.
+| `tests/run.sh` | Offline verification: 9 handler tests + 2 build checks + 25 installer checks (see below). |
 
 ## Usage
 
 ```sh
-# Once, per machine (order matters: the mate's home must exist, so launch the
-# first mate at least once before installing):
-npm install && npm run typecheck        # verify the plugin source
-paseo plugin install /absolute/path/to/this/directory
+# Once, per machine, from the repository root (launch the first mate at least
+# once first, so its home exists):
+node scripts/install.mjs                # the plugin and the standing orders, among the rest
 paseo plugin ls                         # firstmate-beads-onboarding must be running
-./install-captain-orders.sh             # standing orders + the home memory DB
 
 # Per project — nothing. Add the project to Paseo; the mate's standing order to
 # adopt a project's base as a workspace closes the pre-worktree planning window:
 # its create_workspace fires workspace.created, and the plugin onboards the base.
 ```
+
+`scripts/install.mjs` registers the plugin from a copy of the files
+`package.json` lists, under `$XDG_DATA_HOME/aidev` (by default `~/.local/share/aidev`), runs
+`install-captain-orders.sh`, and records both for `scripts/uninstall.mjs`
+(`scripts/README.md` has the details). A plugin of this id registered any
+other way, such as `paseo plugin install` of this directory, is foreign to the
+installer: it leaves that registration alone and never removes it.
+`npm install && npm run typecheck` typechecks the source against the SDK.
 
 The plugin needs `bd` on the daemon's PATH. The orders take effect at the mate's
 next session start (the charter makes it read `data/captain.md` every session);
@@ -85,6 +88,15 @@ the superseded prototype, re-implemented fresh):
   event** (this test caught a real bug during development); failed ready-check
   not attempting init; unknown project id running nothing; and no plugin-owned
   commits or stray writes.
+- **Build seam** (`tests/build.test.mjs`): the daemon builds the plugin from
+  its source wherever it is installed, on every load, and resolves each import
+  there, so `index.server.ts` imports only what the host supplies (Node
+  builtins and `@getpaseo/plugin/server`) and a copy without `node_modules`
+  builds (#33). Asserted from the imports, and, wherever `paseo` is on `PATH`,
+  by building a copy of the files `package.json` lists (as the installer
+  copies them) with Paseo's own compiler, resolved from that `paseo`'s CLI
+  package; a compiler that cannot be found fails the check, and only a
+  machine without `paseo` skips it.
 - **Installer seam** (`tests/installer.test.sh`): synthetic mate homes covering
   every home-resolution branch (absolute, `~`, bare `~`, empty config value,
   missing config, corrupt config → default; legacy location; no home → refusal
@@ -100,11 +112,14 @@ records.
 
 ## Provenance
 
-- Paseo **0.11.2** (`@getpaseo/plugin` / `client` / `protocol` / `server`,
-  pinned in `package.json`): plugin SDK contract (`server.on("workspace.created")`,
-  `PluginServerContext` default-export contribution), the event payload
-  (`{ id, projectId, cwd, name, archivedAt }`), the project record's
-  `projectRootPath`, `paseo plugin install <dir>` and `paseo plugin logs`.
+- Paseo: the SDK devDependencies (`@getpaseo/plugin` / `client` / `protocol`)
+  are pinned at **0.11.2** in `package.json`: the plugin SDK contract
+  (`server.on("workspace.created")`, `PluginServerContext` default-export
+  contribution), the event payload (`{ id, projectId, cwd, name, archivedAt }`),
+  the project record's `projectRootPath`. The daemon's behavior is verified
+  against **0.12.0** (#33): it builds a directory plugin from its source where
+  it lies, on every load; it keeps a plugin whose build failed registered; and
+  `paseo plugin install <dir>`, `reload` and `logs` work as described.
 - firstmate **0.3.4** (`@gpambrozio/paseo-firstmate`): home resolution
   (`server/config.ts`), never-overwritten `data/captain.md` with outranking
   semantics, the charter's read-it-every-session rule.

@@ -14,7 +14,10 @@
 # skills/LICENSE-aidev (#29), and the
 # standing-orders installer from ticket #08 (its own harness in
 # test-standing-orders.sh), and the one-command installer and uninstaller
-# from ticket #21 (its own harness in test-install.sh), invoked at the end.
+# from ticket #21 (test-install.sh, with its onboarding plugin step in
+# test-install-plugin.sh, #33, on the shared lib/install-harness.sh), and the
+# onboarding plugin's own tests, its build from a bare copy with Paseo's
+# compiler included (#33), invoked at the end.
 #
 # Usage: tests/run.sh
 
@@ -674,6 +677,10 @@ run_harness() { # run_harness <script> <label>
 
 run_harness test-standing-orders.sh "the standing-orders installer tests pass (ticket #08)"
 run_harness test-install.sh "the installer and uninstaller tests pass (ticket #21)"
+check "the onboarding plugin step's decision table holds (#33)" node --test "$here/onboarding-plugin.test.mjs"
+run_harness test-install-plugin.sh "the installer's onboarding plugin step tests pass (#33)"
+run_harness ../../personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh \
+	"the onboarding plugin's own tests pass, its build from a bare copy included, skipped without paseo on PATH (#33)"
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
