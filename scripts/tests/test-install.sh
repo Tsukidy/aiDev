@@ -8,9 +8,9 @@
 # real ~/.claude or ~/.paseo. The external CLIs are stubs that record every
 # invocation: `npx` (only `skills@<pin> add|remove`, which copies skill
 # directories and keeps a lock file the way skills@1.7.4 does in copy mode),
-# `npm` (only `ci`, which lands the plugin copy's type dependency), `paseo`
-# (a plugin list kept outside the sandbox, whose build fails without that
-# dependency, as the daemon's does), `bd` (`ready` and `init`)
+# `paseo` (a plugin list kept outside the sandbox, which registers a plugin
+# before building it and keeps it, as failed, when the build fails, as the
+# daemon does), `bd` (`ready` and `init`)
 # and, when a case wants it present, `bun`. Fully offline.
 #
 # Usage: tests/test-install.sh
@@ -102,24 +102,12 @@ if (name === 'npx') {
 	process.exit(0);
 }
 
-if (name === 'npm') {
-	// npm ci in a plugin copy: needs the lockfile there (EUSAGE otherwise) and
-	// lands the type dependency the daemon's build resolves.
-	if (args[0] !== 'ci') process.exit(64);
-	if (fail.includes('npm-ci') || !existsSync('package-lock.json')) process.exit(1);
-	rmSync('node_modules', { recursive: true, force: true });
-	mkdirSync('node_modules/@getpaseo/client', { recursive: true });
-	writeFileSync('node_modules/@getpaseo/client/package.json', '{"name":"@getpaseo/client"}\n');
-	process.exit(0);
-}
-
 if (name === 'paseo') {
-	// Plays the daemon the way Paseo 0.12 does: `install <dir>` registers the
-	// plugin before building it and keeps it, as failed, when the build fails
-	// (plugins/index.js installDirectory); an id already configured is refused;
-	// `reload` rebuilds and fails when the build does. The build fails while
-	// the copy's type dependency does not resolve (plugins/compiler.js), or
-	// always under STUB_FAIL=paseo-build.
+	// Plays the daemon the way Paseo 0.12 does (plugins/index.js): `install
+	// <dir>` registers the plugin before building it and keeps it, as failed,
+	// when the build fails; an id already configured is refused; `reload`
+	// rebuilds, and is refused for a disabled plugin. The build fails under
+	// STUB_FAIL=paseo-build.
 	const file = join(state, 'paseo-plugins.json');
 	const plugins = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
 	const save = () => writeFileSync(file, JSON.stringify(plugins));
@@ -127,13 +115,12 @@ if (name === 'paseo') {
 	if (group !== 'plugin') process.exit(64);
 	if (fail.includes(`paseo-${cmd}`)) process.exit(1);
 	const start = (p) => {
-		const builds = !fail.includes('paseo-build') && existsSync(join(p.path, 'node_modules', '@getpaseo', 'client', 'package.json'));
-		p.status = builds ? 'running' : 'failed';
+		p.status = fail.includes('paseo-build') ? 'failed' : 'running';
 		save();
-		if (!builds) process.exit(1);
+		if (p.status === 'failed') process.exit(1);
 	};
 	if (cmd === 'ls') {
-		process.stdout.write(JSON.stringify(plugins.map((p) => ({ id: p.id, path: p.path, enabled: true, status: p.status }))));
+		process.stdout.write(JSON.stringify(plugins));
 	} else if (cmd === 'install') {
 		const id = JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id;
 		if (plugins.some((p) => p.id === id)) process.exit(1);
@@ -147,6 +134,10 @@ if (name === 'paseo') {
 	} else if (cmd === 'reload') {
 		const p = plugins.find((x) => x.id === arg);
 		if (!p) process.exit(1);
+		if (p.status === 'disabled') {
+			console.error(`Plugin is disabled: ${arg}`);
+			process.exit(1);
+		}
 		start(p);
 	} else process.exit(64);
 	process.exit(0);
@@ -179,12 +170,11 @@ make_stub_dir() { # make_stub_dir <dir> <names...>
 		chmod +x "$dir/$n"
 	done
 }
-make_stub_dir "$tmp/stubs/full" npx npm paseo bd bun
-make_stub_dir "$tmp/stubs/nobun" npx npm paseo bd
-make_stub_dir "$tmp/stubs/nonpx" npm paseo bd bun
-make_stub_dir "$tmp/stubs/nonpm" npx paseo bd bun
-make_stub_dir "$tmp/stubs/nobd" npx npm paseo bun
-make_stub_dir "$tmp/stubs/nopaseo" npx npm bd bun
+make_stub_dir "$tmp/stubs/full" npx paseo bd bun
+make_stub_dir "$tmp/stubs/nobun" npx paseo bd
+make_stub_dir "$tmp/stubs/nonpx" paseo bd bun
+make_stub_dir "$tmp/stubs/nobd" npx paseo bun
+make_stub_dir "$tmp/stubs/nopaseo" npx bd bun
 
 # --- sandboxes ---------------------------------------------------------------------
 #
@@ -302,13 +292,6 @@ log_has() { # log_has <sb> <literal>
 	grep -qF -- "$2" "$1/stub.log"
 }
 
-log_before() { # log_before <sb> <literal> <literal>  — both logged, the first one first
-	local a b
-	a=$(grep -nF -- "$2" "$1/stub.log" | head -n1 | cut -d: -f1)
-	b=$(grep -nF -- "$3" "$1/stub.log" | head -n1 | cut -d: -f1)
-	[ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
-}
-
 # The onboarding plugin's status in the stub daemon's list ("" when not registered).
 plugin_status_is() { # plugin_status_is <sb> <status>
 	node -e '
@@ -318,6 +301,16 @@ plugin_status_is() { # plugin_status_is <sb> <status>
 		const p = list.find((x) => x.id === "firstmate-beads-onboarding");
 		process.exit((p?.status ?? "") === process.argv[2] ? 0 : 1);
 	' "$1/state/paseo-plugins.json" "$2"
+}
+
+# Where install keeps the onboarding plugin's copy.
+plugin_copy() { # plugin_copy <sb>
+	printf '%s\n' "$1/home/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding"
+}
+
+# The daemon calls that change registrations, as `plugin <verb> <arg>` lines.
+plugin_calls() { # plugin_calls <sb>
+	grep -E '^paseo\|plugin (install|reload|remove) ' "$1/stub.log" | cut -d'|' -f2
 }
 
 no_mutating_calls() { # no_mutating_calls <sb>  — only `paseo plugin ls --json` allowed
@@ -473,12 +466,6 @@ plugin_dir=$h/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding
 check "the onboarding plugin source is copied under the data directory" \
 	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/index.server.ts" "$plugin_dir/index.server.ts"
 check "the onboarding plugin is installed with paseo plugin install" log_has "$rich" "paseo|plugin install $plugin_dir|"
-check "the copy carries the plugin's lockfile" \
-	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/package-lock.json" "$plugin_dir/package-lock.json"
-check "the locked dependencies, dev ones included, are installed in the copy" \
-	grep -qE "^npm\|ci .*--include=dev.*\|$plugin_dir\$" "$rich/stub.log"
-check "the dependencies are installed before the daemon builds the copy" \
-	log_before "$rich" "npm|ci " "paseo|plugin install "
 check "the onboarding plugin is running" plugin_status_is "$rich" running
 
 # Attribution travels with the install.
@@ -528,9 +515,11 @@ check "every path the install created is covered by a manifest item" node -e '
 # --- install twice equals install once ------------------------------------------------
 
 after_once=$(snapshot "$h")
+: >"$rich/stub.log"
 install_in "$rich"
 check "a second install exits 0" test $? -eq 0
 check "install twice leaves the same tree, manifest included, as install once" test "$(snapshot "$h")" = "$after_once"
+check "a second install leaves the running, current plugin alone" test -z "$(plugin_calls "$rich")"
 
 # --- the round trip on the operator machine ----------------------------------------
 
@@ -629,7 +618,6 @@ refuse_case() { # refuse_case <description> <sb> <stubset> [VAR=value ...]
 }
 
 refuse_case "missing npx" "$(new_sandbox no-npx)" nonpx
-refuse_case "missing npm" "$(new_sandbox no-npm)" nonpm
 refuse_case "missing bd" "$(new_sandbox no-bd)" nobd
 refuse_case "missing paseo" "$(new_sandbox no-paseo)" nopaseo
 refuse_case "an unreachable Paseo daemon" "$(new_sandbox no-daemon)" full STUB_FAIL=paseo-ls
@@ -838,8 +826,47 @@ check "the plugin's source copy is still there for the daemon" \
 uninstall_in "$sb" --purge --yes
 check "a later uninstall finishes the job" test ! -e "$(manifest_of "$sb")"
 
-# --- a failed plugin build still registers; uninstall takes it back (#33) ------------------
+# --- the onboarding plugin step (#33) ------------------------------------------------------
+#
+# A registration from our copy is ours, recorded or not; one from anywhere else
+# is not. The helpers put a sandbox into the states the step converges from.
 
+# What an install that failed at the daemon before #33 left: the copy recorded,
+# the registration failed, no plugin item.
+forget_plugin() { # forget_plugin <sb>
+	node -e '
+		const fs = require("fs");
+		const f = process.argv[1];
+		const m = JSON.parse(fs.readFileSync(f, "utf8"));
+		m.items = m.items.filter((i) => i.kind !== "plugin");
+		fs.writeFileSync(f, JSON.stringify(m, null, 2) + "\n");
+	' "$(manifest_of "$1")"
+}
+
+# The copy holds an older version of one of its files, as after a repo update.
+age_copy() { # age_copy <sb>
+	local f
+	f=$(plugin_copy "$1")/README.md
+	printf 'an older README\n' >"$f"
+	node -e '
+		const fs = require("fs");
+		const [manifest, file] = process.argv.slice(1);
+		const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
+		m.items.find((i) => i.path === file).sha256 = require("crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+		fs.writeFileSync(manifest, JSON.stringify(m, null, 2) + "\n");
+	' "$(manifest_of "$1")" "$f"
+}
+
+set_plugin_status() { # set_plugin_status <sb> <status>  — what the stub daemon reports
+	node -e '
+		const fs = require("fs");
+		const f = process.argv[1];
+		fs.writeFileSync(f, JSON.stringify(JSON.parse(fs.readFileSync(f, "utf8")).map((p) => ({ ...p, status: process.argv[2] }))));
+	' "$1/state/paseo-plugins.json" "$2"
+}
+
+# A failed build still registers the plugin; it is recorded, and uninstall
+# takes it back.
 sb=$(new_sandbox plugin-build-fails)
 before=$(snapshot "$sb/home")
 run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
@@ -852,85 +879,72 @@ check "uninstall after a failed plugin build exits 0" test $? -eq 0
 check "uninstall after a failed plugin build leaves no registration" plugin_status_is "$sb" ""
 check "install with a failed plugin build → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-# --- a failed dependency install registers nothing; a re-run converges (#33) ---------------
-
-sb=$(new_sandbox npm-ci-fails)
-before=$(snapshot "$sb/home")
-run_in "$sb" full STUB_FAIL=npm-ci -- "$installer"
-check "a failing npm ci makes the install exit nonzero" test $? -ne 0
-check "a plugin without its dependencies is never handed to the daemon" bash -c '! grep -qF "paseo|plugin install " "$1"' _ "$sb/stub.log"
-install_in "$sb"
-check "re-running after a failed npm ci exits 0" test $? -eq 0
-check "re-running after a failed npm ci leaves the plugin running" plugin_status_is "$sb" running
-uninstall_in "$sb" --purge --yes
-check "uninstall after a converged npm ci failure restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
-
-# --- a re-run over the plugin registered as failed and not recorded (#33) ------------------
-#
-# The state the #21 installer left on the operator machine: the copy without
-# its lockfile or dependencies, registered in Paseo as failed, and no plugin
-# item in the manifest.
-
+# The state the #21 installer left on the operator machine converges on re-run.
 sb=$(new_sandbox plugin-failed-unrecorded)
-h=$sb/home
-plugin_dir=$h/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding
-before=$(snapshot "$h")
-install_in "$sb"
-rm -rf "$plugin_dir/node_modules" "$plugin_dir/package-lock.json"
-node -e '
-	const fs = require("fs");
-	const [manifest, plugins, lock] = process.argv.slice(1);
-	const m = JSON.parse(fs.readFileSync(manifest, "utf8"));
-	m.items = m.items.filter((i) => i.kind !== "plugin" && i.path !== lock);
-	fs.writeFileSync(manifest, JSON.stringify(m, null, 2) + "\n");
-	const list = JSON.parse(fs.readFileSync(plugins, "utf8"));
-	for (const p of list) p.status = "failed";
-	fs.writeFileSync(plugins, JSON.stringify(list));
-' "$(manifest_of "$sb")" "$sb/state/paseo-plugins.json" "$plugin_dir/package-lock.json"
+before=$(snapshot "$sb/home")
+run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
+forget_plugin "$sb"
 : >"$sb/stub.log"
 install_in "$sb"
 status=$?
-check "re-running over a plugin registered as failed at our copy exits 0" test "$status" -eq 0
+check "re-running over an unrecorded failed registration from our copy exits 0" test "$status" -eq 0
 [ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
-check "the re-run rebuilds the registered plugin with reload, not a second install" \
-	bash -c 'grep -qF "paseo|plugin reload firstmate-beads-onboarding|" "$1" && ! grep -qF "paseo|plugin install " "$1"' _ "$sb/stub.log"
+check "the re-run rebuilds it with reload, not a second install" \
+	test "$(plugin_calls "$sb")" = "plugin reload firstmate-beads-onboarding"
 check "the re-run leaves the plugin running" plugin_status_is "$sb" running
 check "the re-run records the plugin in the manifest" manifest_true "$sb" \
 	'm.items.some((i) => i.kind === "plugin" && i.id === "firstmate-beads-onboarding")'
 uninstall_in "$sb" --purge --yes
 check "uninstall after the converged re-run leaves no registration" plugin_status_is "$sb" ""
-check "uninstall after the converged re-run restores the snapshot" test "$(snapshot "$h")" = "$before"
+check "uninstall after the converged re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-# --- a plugin of that id registered elsewhere is not ours ----------------------------------
+# ...and uninstall alone takes that registration back too.
+sb=$(new_sandbox plugin-failed-uninstall)
+before=$(snapshot "$sb/home")
+run_in "$sb" full STUB_FAIL=paseo-build -- "$installer"
+forget_plugin "$sb"
+uninstall_in "$sb" --purge --yes
+check "uninstall over an unrecorded failed registration exits 0" test $? -eq 0
+check "uninstall removes the unrecorded registration from our copy" plugin_status_is "$sb" ""
+check "uninstall over an unrecorded failed registration restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
+# A running plugin whose copy is out of date is reloaded; the dry run names
+# the same call.
+sb=$(new_sandbox plugin-changed)
+install_in "$sb"
+age_copy "$sb"
+: >"$sb/stub.log"
+install_in "$sb" --dry-run
+check "the dry run names the reload the run makes" out_has "$sb" "then paseo plugin reload firstmate-beads-onboarding"
+install_in "$sb"
+check "re-running over an out-of-date copy exits 0" test $? -eq 0
+check "a running plugin whose copy changed is reloaded" test "$(plugin_calls "$sb")" = "plugin reload firstmate-beads-onboarding"
+check "the out-of-date copy is current again" \
+	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/README.md" "$(plugin_copy "$sb")/README.md"
+check "the reloaded plugin is running" plugin_status_is "$sb" running
+
+# A plugin disabled in Paseo stays disabled (the stub, like Paseo, refuses to
+# reload it); its copy is still refreshed.
+sb=$(new_sandbox plugin-disabled)
+install_in "$sb"
+age_copy "$sb"
+set_plugin_status "$sb" disabled
+: >"$sb/stub.log"
+install_in "$sb"
+check "re-running with the plugin disabled in Paseo exits 0" test $? -eq 0
+check "a disabled plugin is neither reloaded nor reinstalled" test -z "$(plugin_calls "$sb")"
+check "a disabled plugin's copy is refreshed" \
+	cmp -s "$repo/personal-extensions/paseo-firstmate-beads-onboarding/README.md" "$(plugin_copy "$sb")/README.md"
+check "a disabled plugin stays disabled" plugin_status_is "$sb" disabled
+
+# A plugin of that id registered from anywhere else is not ours.
 sb=$(new_sandbox plugin-foreign)
 printf '[{"id":"firstmate-beads-onboarding","path":"/opt/elsewhere","status":"running"}]' >"$sb/state/paseo-plugins.json"
 install_in "$sb"
 check "install with the plugin registered from elsewhere exits 0" test $? -eq 0
-check "a plugin registered from elsewhere is left alone" \
-	bash -c '! grep -qE "^(npm\|ci |paseo\|plugin (install|reload|remove) )" "$1"' _ "$sb/stub.log"
-check "a plugin registered from elsewhere is not recorded" manifest_true "$sb" '!m.items.some((i) => i.kind === "plugin")'
 uninstall_in "$sb" --purge --yes
-check "uninstall leaves a plugin registered from elsewhere in place" plugin_status_is "$sb" running
-
-# --- a plugin disabled in Paseo stays disabled; its dependencies still converge ------------
-
-sb=$(new_sandbox plugin-disabled)
-plugin_dir=$sb/home/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding
-install_in "$sb"
-rm -rf "$plugin_dir/node_modules"
-node -e '
-	const fs = require("fs");
-	const f = process.argv[1];
-	fs.writeFileSync(f, JSON.stringify(JSON.parse(fs.readFileSync(f, "utf8")).map((p) => ({ ...p, status: "disabled" }))));
-' "$sb/state/paseo-plugins.json"
-: >"$sb/stub.log"
-install_in "$sb"
-check "re-running with the plugin disabled in Paseo exits 0" test $? -eq 0
-check "the copy's missing dependencies are installed again" test -f "$plugin_dir/node_modules/@getpaseo/client/package.json"
-check "a disabled plugin is neither reloaded nor reinstalled" \
-	bash -c '! grep -qE "^paseo\|plugin (install|reload) " "$1"' _ "$sb/stub.log"
-check "a disabled plugin stays disabled" plugin_status_is "$sb" disabled
+check "install and uninstall leave a plugin registered from elsewhere alone" test -z "$(plugin_calls "$sb")"
+check "the plugin registered from elsewhere is still there" plugin_status_is "$sb" running
 
 # --- partial failure converges ----------------------------------------------------------
 
@@ -966,7 +980,9 @@ check "install --dry-run writes nothing" test "$(snapshot "$sb/home")" = "$snap"
 check "install --dry-run calls no mutating CLI" no_mutating_calls "$sb"
 check "install --dry-run prints the plan with the paths it would write" \
 	bash -c 'grep -qF "$2/.claude/agents/effort-max.md" "$1" && grep -qF "$2/.claude/settings.json" "$1" && grep -qF "skills add" "$1"' _ "$sb/out.txt" "$sb/home"
+check "install --dry-run names the daemon call the run makes" out_has "$sb" "then paseo plugin install $(plugin_copy "$sb")"
 install_in "$sb"
+check "the run makes that call" test "$(plugin_calls "$sb")" = "plugin install $(plugin_copy "$sb")"
 snap=$(snapshot "$sb/home")
 : >"$sb/stub.log"
 uninstall_in "$sb" --dry-run

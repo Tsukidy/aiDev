@@ -6,8 +6,8 @@
 //   node scripts/uninstall.mjs [--dry-run] [--purge [--yes]]
 //
 // No manifest → refuses, nothing touched. Otherwise, in order: the onboarding
-// plugin (while its source copy still exists) and the dependencies npm
-// installed in that copy, the skills (through the skills
+// plugin's registration from our copy, recorded or not (while the copy still
+// exists), the skills (through the skills
 // CLI, per runtime target), every file whose whole content is ours (each only
 // while it still holds what was installed; an edited one, like a tuned model
 // sheet, is kept and reported; a replaced operator file comes back), our
@@ -18,7 +18,7 @@
 // --purge, which asks on a terminal (or takes --yes) before anything is touched.
 
 import { existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { sep } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import {
 	SKILLS_CLI,
@@ -26,6 +26,8 @@ import {
 	insideHome,
 	loadManifest,
 	makeReport,
+	onboardingPlugin,
+	ourRegistration,
 	paseoPlugins,
 	parseFlags,
 	readSkillsLock,
@@ -57,6 +59,11 @@ const keep = (note) => note && kept.push(note);
 const owned = ownedFiles(m);
 const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
+// The onboarding plugin is ours to take back when the manifest records it or
+// its copy: an install that failed at the daemon before #33 recorded the copy
+// but no plugin, and left a registration from the copy (see ourRegistration).
+const plugin = onboardingPlugin(ctx);
+const pluginRecorded = m.items.some((i) => i.path === plugin.copy || i.path.startsWith(plugin.copy + sep));
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -66,7 +73,7 @@ for (const i of m.items) {
 	}
 }
 if (items(m, 'skill').length && !findOnPath('npx', ctx.env)) report.error('npx not found on PATH — needed to remove the skills through the skills CLI');
-if (items(m, 'plugin').length) {
+if (pluginRecorded) {
 	if (!findOnPath('paseo', ctx.env)) report.error('paseo not found on PATH — needed to remove the onboarding plugin');
 	else if (!flags['dry-run'] && paseoPlugins(ctx) === null) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
 }
@@ -83,7 +90,7 @@ if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
 if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
-		...items(m, 'plugin').map((p) => `paseo plugin remove ${p.id} (when registered from ${p.path}), then delete ${join(p.path, 'node_modules')}`),
+		...(pluginRecorded ? [`paseo plugin remove ${plugin.id}, if Paseo lists it from ${plugin.copy}`] : []),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -102,18 +109,15 @@ const fail = (msg) => {
 
 // --- the onboarding plugin, before its source copy goes -------------------------------
 
-for (const p of items(m, 'plugin')) {
+if (pluginRecorded) {
 	const plugins = paseoPlugins(ctx);
 	if (plugins === null) fail('`paseo plugin ls --json` failed — is the Paseo daemon running?');
-	// Only our registration: the item is recorded before install registers
-	// anything, so the id may since have been installed from elsewhere.
-	if (plugins.some((x) => x.id === p.id && x.path === p.path)) {
-		const r = run(ctx, 'paseo', ['plugin', 'remove', p.id]);
-		if (r.status !== 0) fail(`paseo plugin remove ${p.id} failed (exit ${r.status})`);
+	if (ourRegistration(plugins, plugin)) {
+		const r = run(ctx, 'paseo', ['plugin', 'remove', plugin.id]);
+		if (r.status !== 0) fail(`paseo plugin remove ${plugin.id} failed (exit ${r.status})`);
 	}
-	rmSync(join(p.path, 'node_modules'), { recursive: true, force: true });
-	drop(m, p);
 }
+for (const p of items(m, 'plugin')) drop(m, p);
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------

@@ -20,8 +20,7 @@ they call, and the offline tests for all of it.
 
 One command sets up an operator machine for the combined fleet on Claude
 Code, and one command takes it back off. Both need node ≥ 22.20 (it ships with
-Paseo); install also runs `npm ci` for the onboarding plugin's locked
-dependencies, which needs the npm registry or a warm npm cache.
+Paseo) and nothing else from npm.
 
 ```sh
 node scripts/install.mjs              # install, or converge an existing install
@@ -41,8 +40,8 @@ checkout staying where it is.
 ### What install does, in order
 
 1. **Preconditions**, all checked before anything is written; any failure
-   exits nonzero with nothing written: node ≥ 22.20; `npx`, `npm`, `bd` and
-   `paseo` on PATH (checked and reported, never installed); the Paseo daemon answers
+   exits nonzero with nothing written: node ≥ 22.20; `npx`, `bd` and `paseo`
+   on PATH (checked and reported, never installed); the Paseo daemon answers
    `paseo plugin ls`; the first mate's home exists (launch the mate once);
    every path below resolves inside `$HOME` after following symlinks
    (`CLAUDE_CONFIG_DIR`, `PASEO_HOME` and the XDG variables are honored only
@@ -79,16 +78,16 @@ checkout staying where it is.
 8. **The orders and the plugin**: `install-standing-orders.sh` and the beads
    onboarding `install-captain-orders.sh` (each idempotent on its own; the
    latter creates the mate's home memory database with `bd init`), then the
-   beads onboarding plugin. It is copied under the data directory with its
-   `package-lock.json`, and `npm ci --include=dev --ignore-scripts
-   --prefer-offline` installs the locked dependencies into the copy: the
-   daemon builds the plugin where it lies and resolves its type imports
-   (`@getpaseo/client`) from there (#33). Then `paseo plugin install <copy>`.
-   A re-run whose copy changed, or whose plugin Paseo reports `failed`, runs
-   `npm ci` again and `paseo plugin reload` (a disabled plugin is left
-   disabled). A registration at the copy counts as ours even when the
-   manifest lacks it, because Paseo keeps a plugin whose build failed
-   registered; one of that id from any other path is left alone.
+   beads onboarding plugin, copied under the data directory and installed
+   with `paseo plugin install <copy>`. The daemon builds a plugin where it
+   lies, on every load, so the copy must build on its own: the plugin's
+   source imports only what the host supplies (its own tests guard this,
+   #33). A registration from the copy is ours whether or not the manifest
+   recorded it, because Paseo keeps a plugin whose build failed registered:
+   a re-run reloads ours when it failed or runs from an out-of-date copy, and
+   uninstall removes it. A disabled plugin is left disabled, and one of that
+   id registered from anywhere else is left alone. The dry run prints the
+   daemon call the run will make.
 9. **The manifest** (below), plus NOTICE, `pstack-provenance.json` and every
    license file of `skills/`, with the repository's own `LICENSE`, under the
    data directory, so attribution travels with the install.
@@ -135,14 +134,13 @@ excluded skill only warns. A name that is not a skill warns.
 | `<claude>/CLAUDE.md` | the `aidev-pstack-sheet` block | our block removed; the file is deleted if the install created it and nothing else is in it |
 | `<mate>/data/captain.md` | the `aidev-standing-orders` and `paseo-beads-onboarding` blocks (written by the two orders installers) | both blocks and the headings in front of them removed |
 | `<mate>/.beads`, `.beads.gate.lock`, `.git` | the mate's home memory database, when `bd init` created it during install | kept; `--purge` deletes them |
-| `<data>/paseo-plugins/firstmate-beads-onboarding/` | the plugin source copy and its lockfile, `node_modules` from `npm ci`, registered in Paseo by `paseo plugin install` | `paseo plugin remove` (only a registration from this copy), then `node_modules` and the copy are deleted |
+| `<data>/paseo-plugins/firstmate-beads-onboarding/` | the plugin source copy, registered in Paseo by `paseo plugin install` | `paseo plugin remove` (a registration from this copy, recorded or not), then the copy is deleted |
 | `<data>/licenses/` | NOTICE, provenance manifest, licenses | deleted |
 | `<state>/install-manifest.json` | the manifest | deleted last |
 | `<state>/backups/` | a copy of every pre-existing file the install modified | consumed by uninstall; a backup it cannot restore is kept and reported |
 | any directory above that did not exist | | removed if empty |
 
-The npm cache under `~/.npm` (npx's packages, the plugin's dependency
-tarballs) is npm's and is left alone.
+The npx package cache under `~/.npm` is npm's and is left alone.
 
 ### Known limits
 

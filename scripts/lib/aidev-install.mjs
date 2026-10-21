@@ -490,7 +490,11 @@ export function run(ctx, cmd, args, { cwd, capture = false, env = {} } = {}) {
 }
 
 // The daemon's plugin registrations (`paseo plugin ls --json`: id, path,
-// enabled, status), or null when the daemon does not answer.
+// status), or null when the daemon does not answer. `path` is the directory
+// as registered (path.resolve'd, not real-pathed). `status` is one of
+// running | failed | disabled (Paseo's resolvePluginStatus): disabled means
+// the plugin, or all plugins, are switched off, and Paseo then refuses to
+// reload it; failed means its build or start failed, and it stays registered.
 export function paseoPlugins(ctx) {
 	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
 	if (r.status !== 0) return null;
@@ -501,6 +505,20 @@ export function paseoPlugins(ctx) {
 		return null;
 	}
 }
+
+// The beads onboarding plugin: its id, and the copy install registers with
+// Paseo, under the data directory, so the daemon never depends on where this
+// checkout lives or which branch it is on.
+export function onboardingPlugin(ctx) {
+	const id = JSON.parse(readFileSync(join(ONBOARDING_PLUGIN_DIR, 'paseo-plugin.json'), 'utf8')).id;
+	return { id, copy: join(ctx.dataDir, 'paseo-plugins', id) };
+}
+
+// Our registration of a plugin: the one Paseo lists under its id from our
+// copy. Ownership is by path, not by the manifest, because Paseo keeps a
+// plugin whose build failed registered: an install that stopped there left a
+// registration it never recorded, and it is still ours to reload or remove.
+export const ourRegistration = (plugins, { id, copy }) => plugins.find((p) => p.id === id && p.path === copy);
 
 export const skillsCli = (ctx, args) => run(ctx, 'npx', ['--yes', SKILLS_CLI, ...args], { env: { DISABLE_TELEMETRY: '1' } });
 
