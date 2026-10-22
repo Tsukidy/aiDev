@@ -191,4 +191,33 @@ repo_update_between() {
 }
 repo_update_between
 
+# --- a kill leaves captain.md's record and backup, which only our parts justify ---
+
+# Both blocks are already in captain.md and not ours (an earlier install's
+# file, kept by hand). The kill at bd-ready leaves the shared record and the
+# backup written before the first script; the re-run must drop both, as an
+# uninterrupted install records neither.
+foreign_blocks() {
+	local label="both blocks already there, not ours: a bd-ready kill" ref sb before status
+	ref=$(new_sandbox ref-foreign)
+	install_in "$ref"
+	sb=$(new_sandbox foreign)
+	cp "$(captain_of "$ref")" "$(captain_of "$sb")"
+	before=$(snapshot "$sb/home")
+	interrupt "$sb" bd-ready
+	check "$label: the install was killed" test $? -ne 0
+	check "$label: at that call" last_call_is "$sb" bd "ready"
+	check "$label: the kill left captain.md's record and backup" manifest_true "$sb" 'm.items.some((i) => i.kind === "backup" && i.of.endsWith("/captain.md")) && m.items.some((i) => i.shared && i.path.endsWith("/captain.md"))'
+	install_in "$sb"
+	status=$?
+	check "$label: the re-run exits 0" test "$status" -eq 0
+	check "$label: the re-run records nothing for captain.md" manifest_true "$sb" '!m.items.some((i) => (i.path ?? i.of).endsWith("/captain.md"))'
+	check "$label: the re-run removed the backup" test -z "$(ls "$sb/home/.local/state/aidev/backups" 2>/dev/null)"
+	uninstall_in "$sb" --purge --yes
+	status=$?
+	check "$label: uninstall exits 0" test "$status" -eq 0
+	check "$label: uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+}
+foreign_blocks
+
 summary

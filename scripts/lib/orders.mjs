@@ -28,6 +28,7 @@ import {
 	blockBefore,
 	blockRange,
 	countLines,
+	fileSha,
 	lexists,
 	markers,
 	noteSharedFile,
@@ -35,7 +36,7 @@ import {
 	resolveMateHome,
 	run,
 } from './aidev-install.mjs';
-import { add, backupOf, beadsDbItem, drop, ensure, first, items, markedBlockIntent, markedBlockItem, replace, sharedFile } from './manifest.mjs';
+import { add, backupOf, beadsDbItem, drop, ensure, first, items, markedBlockIntent, markedBlockItem, partsIn, replace, sharedFile } from './manifest.mjs';
 
 // What bd init --quiet --stealth creates in a non-git home
 // (docs/research/beads-cli-memory-surface.md A2): its store, a gate lock, and
@@ -60,20 +61,22 @@ export function ordersStep(ctx) {
 	const ourBlock = (m, id) => first(m, 'marked-block', (i) => i.path === captain && i.id === id);
 
 	// captain.md's shared record and backup, written before the first script
-	// so a killed run leaves them, and taken back after when the file is as
-	// it was and the record is this run's.
+	// so a killed run leaves them, and taken back after when nothing of ours
+	// is recorded in the file and it is as the backup holds it (absent, with
+	// no backup): neither this run nor a killed one before it had anything to
+	// add, and uninstall would have nothing to strip.
 	function recordCaptain(m) {
 		const existed = sharedFile(m, captain)?.existedBefore ?? captainText !== null;
-		const fresh = { record: !sharedFile(m, captain), backup: !backupOf(m, captain) };
 		if (existed) backupOnce(ctx, m, captain);
 		noteSharedFile(m, captain, existed);
-		return { existed, fresh };
+		return existed;
 	}
-	function settleCaptain(m, { existed, fresh }) {
-		if (readText(captain) !== captainText || !fresh.record) return noteSharedFile(m, captain, existed);
-		drop(m, sharedFile(m, captain));
+	function settleCaptain(m, existed) {
 		const b = backupOf(m, captain);
-		if (fresh.backup && b) {
+		const asBefore = b ? fileSha(captain) === b.sha256 : readText(captain) === null;
+		if (partsIn(m, captain).length || !asBefore) return noteSharedFile(m, captain, existed);
+		drop(m, sharedFile(m, captain));
+		if (b) {
 			rmSync(b.path, { force: true });
 			drop(m, b);
 		}
@@ -106,7 +109,7 @@ export function ordersStep(ctx) {
 		describe: () => ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
 
 		install(m, report, checkpoint) {
-			const state = recordCaptain(m);
+			const existed = recordCaptain(m);
 			for (const o of ORDERS) {
 				const pre = readText(captain) ?? '';
 				const ours = ourBlock(m, o.block);
@@ -117,7 +120,7 @@ export function ordersStep(ctx) {
 					// block. One anchored at an empty file the install created stays:
 					// what precedes the block then is the header the script wrote.
 					if (!ours) add(m, markedBlockIntent(captain, o.block, pre));
-					else if (ours.at && !(ours.at.length === 0 && !state.existed)) replace(m, ours, markedBlockIntent(captain, o.block, pre));
+					else if (ours.at && !(ours.at.length === 0 && !existed)) replace(m, ours, markedBlockIntent(captain, o.block, pre));
 				}
 				for (const p of o.creates(mateHome)) if (!lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
 				checkpoint();
@@ -134,7 +137,7 @@ export function ordersStep(ctx) {
 					break;
 				}
 			}
-			settleCaptain(m, state);
+			settleCaptain(m, existed);
 		},
 	};
 }
