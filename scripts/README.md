@@ -157,9 +157,9 @@ hook entry, the `CLAUDE.md` block) is recorded with the shared file's
 record; a backup is `pending` until its copy is made. Install and uninstall
 settle what a killed run left when they load the manifest. A pending backup
 never copied was never taken, and the write recorded with it was never made.
-A recorded write the file holds is ours; one it does not hold was never
-made, so the record reads the file as it was (the operator's, which its
-backup restores, or nothing). An operator's edit made after a kill is kept.
+A recorded write the file holds, and did not before, is ours; any other
+was never made, so the record reads the file as it was (the operator's,
+which its backup restores, or nothing). An operator's edit made after a kill is kept.
 The tests stop the install at kill points that only they set
 (`AIDEV_TEST_KILL`): once a write is recorded, once its backup is copied,
 and once it is written.
