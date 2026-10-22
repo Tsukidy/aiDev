@@ -141,8 +141,11 @@ header goes with the block. A re-run also drops `captain.md`'s record and
 backup, which a killed run leaves, when nothing of ours is in the file and no
 orders script has changed it (the record says so once one has).
 So a re-run knows the skills a killed run copied as ours, and uninstall after
-a kill at any call restores the pre-install state. `tests/test-install-interrupt.sh`
-kills the install at each such call.
+a kill at any call restores the pre-install state. One case needs the re-run
+first: a kill inside the standing-orders script after it created `captain.md`
+with its header, but before it appended the block. Uninstall straight after
+leaves that header; uninstall after a re-run does not.
+`tests/test-install-interrupt.sh` kills the install at each such call.
 
 What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
