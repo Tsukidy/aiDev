@@ -33,7 +33,7 @@
 // killed at any of them leaves a manifest a re-run and uninstall go by.
 
 import { readFileSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
 	BEADS_CREATED_NAMES,
 	ONBOARDING_PLUGIN_DIR,
@@ -63,7 +63,6 @@ import {
 	resolveMateHome,
 	run,
 	saveManifest,
-	sha256,
 	skillDependencies,
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
@@ -239,7 +238,7 @@ noteSharedFile(m, captain, captainExisted);
 const ourBlock = (id) => first(m, 'marked-block', (i) => i.path === captain && i.id === id);
 for (const o of ORDERS) {
 	const pre = readText(captain) ?? '';
-	if (!ourBlock(o.block) && !blockRange(pre, o.block)) add(m, markedBlockIntent(captain, o.block, { length: pre.length, sha256: sha256(pre) }));
+	if (!ourBlock(o.block) && !blockRange(pre, o.block)) add(m, markedBlockIntent(captain, o.block, pre));
 	if (o.beads && !lexists(join(mateHome, '.beads'))) {
 		for (const n of BEADS_CREATED_NAMES) {
 			const p = join(mateHome, n);
@@ -254,7 +253,7 @@ for (const o of ORDERS) {
 		if (blockRange(post, o.block)) replace(m, item, markedBlockItem(captain, o.block, blockBefore(post, item)));
 		else drop(m, item);
 	}
-	if (o.beads) for (const i of items(m, 'beads-db', (i) => dirname(i.path) === mateHome && !lexists(i.path))) drop(m, i);
+	if (o.beads) for (const i of items(m, 'beads-db', (i) => !lexists(i.path))) drop(m, i);
 	if (r.status !== 0) {
 		report.error(`${o.script} failed (exit ${r.status})`);
 		break;

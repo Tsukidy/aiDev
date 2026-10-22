@@ -29,6 +29,7 @@
 //
 // `existedBefore` on a file says whether it was there before the install.
 
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
@@ -49,7 +50,8 @@ export function newManifest(repoCommit) {
 export function readManifest(path) {
 	if (!existsSync(path)) return null;
 	const m = JSON.parse(readFileSync(path, 'utf8'));
-	if (![1, 2, 3, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
+	const v = m.schemaVersion;
+	if (!Number.isInteger(v) || v < 1 || v > SCHEMA_VERSION || !Array.isArray(m.items)) {
 		throw new Error(`unsupported manifest at ${path} (schemaVersion ${m.schemaVersion})`);
 	}
 	if (m.schemaVersion === 1) upgradeUnrecordedPlugin(m);
@@ -119,7 +121,13 @@ export const ownedFileItem = ({ kind = 'file', name, path, sha256, existedBefore
 export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind: 'file', path, shared: true, format, existedBefore });
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
-export const markedBlockIntent = (path, id, at) => ({ kind: 'marked-block', path, id, at });
+// The intent to append a block to a file holding `text` (#35).
+export const markedBlockIntent = (path, id, text) => ({
+	kind: 'marked-block',
+	path,
+	id,
+	at: { length: text.length, sha256: createHash('sha256').update(text).digest('hex') },
+});
 export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
 export const skipEntryItem = (path, entry, existedBefore, before) => ({ kind: 'skip-entry', path, entry, existedBefore, before });
 export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });

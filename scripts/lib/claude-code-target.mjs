@@ -98,9 +98,10 @@ export function claudeCodeTarget(ctx) {
 	];
 	const agents = repoAgents().map((a) => ({ ...a, dest: join(agentsDir, `${a.name}.md`) }));
 
-	// Whether a skill name is present for Claude Code anywhere the skills CLI
-	// leaves one: its skills directory, the CLI's lock, or its canonical directory.
-	const presence = () => {
+	// Reads the skills CLI's lock once, then tells whether a skill name is
+	// present for Claude Code anywhere the CLI leaves one: its skills directory,
+	// the lock, or its canonical directory.
+	const skillPresence = () => {
 		const lock = readSkillsLock(ctx)?.skills ?? {};
 		return (n) => lexists(join(skillsDir, n)) || n in lock || lexists(join(ctx.canonicalSkillsDir, n));
 	};
@@ -168,7 +169,7 @@ export function claudeCodeTarget(ctx) {
 		// delete the operator's copy and lock entry at uninstall. Skipped.
 		planSkills(m, desired) {
 			const ours = new Set(items(m, 'skill', (i) => i.agent === NAME).map((i) => i.name));
-			const isPresent = presence();
+			const isPresent = skillPresence();
 			const collisions = desired.filter((n) => !ours.has(n) && isPresent(n));
 			return {
 				desired,
@@ -209,8 +210,8 @@ export function claudeCodeTarget(ctx) {
 				failed = r.status !== 0;
 				if (failed) report.error(`skills CLI add failed (exit ${r.status}); re-run install to converge`);
 			}
-			// What the CLI left nowhere, even after a failure, is not ours to remove.
-			const isPresent = presence();
+			// Drop the records of skills the CLI left nowhere, even after a failure.
+			const isPresent = skillPresence();
 			for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.add.includes(i.name) && !isPresent(i.name))) drop(m, i);
 			if (failed) return;
 
