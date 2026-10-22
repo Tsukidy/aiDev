@@ -94,7 +94,9 @@ export const drop = (m, item) => {
 export const ensure = (m, item, pred) => first(m, item.kind, pred) ?? add(m, item);
 // Put a new item where an old one was.
 export const replace = (m, old, item) => {
-	m.items[m.items.indexOf(old)] = item;
+	const i = m.items.indexOf(old);
+	if (i < 0) throw new Error(`cannot replace a ${old.kind} item that is not in the manifest (${old.path})`);
+	m.items[i] = item;
 	return item;
 };
 
@@ -113,7 +115,7 @@ export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-ent
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
 export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
 export const skipEntryItem = (path, entry, existedBefore, before) => ({ kind: 'skip-entry', path, entry, existedBefore, before });
-export const backupItem =(of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
+export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
 export const dirItem = (path) => ({ kind: 'dir', path });
 export const beadsDbItem = (path) => ({ kind: 'beads-db', path });
 export const skillsLockItem = (path, existedBefore) => ({ kind: 'skills-lock', path, existedBefore });

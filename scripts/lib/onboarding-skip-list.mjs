@@ -1,9 +1,14 @@
 // The beads onboarding plugin's skip list (#34): an operator-owned file
 // (ctx.skipListFile) of project bases the plugin never runs `bd init` in, one
-// absolute or ~/ path per line, `#` starting a comment, matched by real path.
-// The plugin reads it on every workspace.created event; its parsing there
-// (index.server.ts, which may import only what the host supplies) is the twin
-// of entries() and sameDir() below.
+// absolute or ~/ path per line, matched by real path; a `#` at a line's start
+// or after whitespace starts a comment, so a `#` inside a path is part of it.
+// The plugin reads it on every workspace.created event, in index.server.ts,
+// which may import only what the host supplies and so repeats the rules here:
+// its line rule is entries()'s. Its match is sameDir()'s for a path that
+// exists; for one that does not, realResolve() real-paths the longest existing
+// prefix and the plugin only path.resolve()s it. Such an entry can never name
+// this checkout, which exists, so the two agree on whether this checkout is
+// listed.
 //
 // The install adds this checkout's root, so the plugin never onboards the
 // skill source itself; the entry is recorded before it is written, and the
@@ -12,8 +17,8 @@
 // the operator already has for this checkout is theirs: nothing is added,
 // nothing recorded.
 
-import { rmSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { mkdirSync, rmSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { REPO, lexists, readText, realResolve, writeShared } from './aidev-install.mjs';
 import { add, drop, first, items, replace, skipEntryItem } from './manifest.mjs';
 
@@ -25,7 +30,7 @@ export const HEADER =
 export const entries = (text) =>
 	text
 		.split('\n')
-		.map((l) => l.replace(/#.*/, '').trim())
+		.map((l) => l.replace(/(^|\s)#.*/, '').trim())
 		.filter(Boolean);
 
 // Whether a list entry names dir: both sides by real path, ~ being home.
@@ -77,34 +82,47 @@ export function onboardingSkipList(ctx) {
 		if (action === 'current') return `${root} is on the beads onboarding skip list ${path} already`;
 		return `${path} already lists ${root} (the operator's entry) — left as is`;
 	};
+	const unreadable = (text) => text === null && lexists(path);
+	const unreadableError = `${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`;
+	const read = (m) => {
+		const text = readText(path);
+		const record = ours(m);
+		return { action: skipAction({ text, root, home: ctx.home, recorded: Boolean(record) }), record, text };
+	};
 
 	return {
 		path,
 
 		preconditions(report) {
-			if (lexists(path) && readText(path) === null) report.error(`${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`);
+			if (unreadable(readText(path))) report.error(unreadableError);
 		},
 
-		plan(m) {
-			const text = readText(path);
-			const record = ours(m);
-			return { action: skipAction({ text, root, home: ctx.home, recorded: Boolean(record) }), record, text };
-		},
+		plan: (m) => ({ action: read(m).action }),
 
 		describe,
 
-		// Recorded and checkpointed before the list is written, so an
-		// interrupted run leaves no entry uninstall cannot find. Our entry,
-		// deleted since, comes back (as our hook entry does).
-		install(m, { action, record, text }, report, checkpoint) {
+		// Read afresh, so a line the operator added since the plan is kept
+		// and counts. The entry is recorded and the list's directory created
+		// before the checkpoint saves the manifest, so an interrupted write
+		// leaves nothing uninstall cannot find. Our entry, deleted since,
+		// comes back. Returns whether this checkout is listed: the plugin is
+		// registered only when it is.
+		install(m, report, checkpoint) {
+			const { action, record, text } = read(m);
+			if (unreadable(text)) {
+				report.error(unreadableError);
+				return false;
+			}
 			report.say(describe({ action }));
-			if (action !== 'add') return;
+			if (action !== 'add') return true;
 			const next = appendEntry(text, root);
 			const item = skipEntryItem(path, root, text !== null && (record?.existedBefore ?? true), next.before);
 			if (record) replace(m, record, item);
 			else add(m, item);
+			mkdirSync(dirname(path), { recursive: true });
 			checkpoint();
 			writeShared(path, next.text);
+			return true;
 		},
 
 		reversePlan: (m) => items(m, 'skip-entry').map((i) => `remove ${i.entry} from the beads onboarding skip list ${i.path}`),

@@ -327,8 +327,53 @@ sb=$(new_sandbox no-bun-strict)
 snap=$(snapshot "$sb/home")
 run_in "$sb" nobun -- "$installer" --strict
 check "a missing bun under --strict exits nonzero" test $? -ne 0
+check "the refusal is the bun error" out_has "$sb" "error: bun: not found"
 check "a missing bun under --strict writes nothing" test "$(snapshot "$sb/home")" = "$snap"
 check "a missing bun under --strict calls no mutating CLI" no_mutating_calls "$sb"
+
+# --- a run from a linked git worktree: a warning, an error under --strict ------------------
+#
+# The skip-list entry names the checkout the install runs from, and a worktree
+# is not the base Paseo knows as the project.
+
+check "a git copy of this checkout with a linked worktree is made" git_copy_with_worktree "$tmp/gitcopy"
+sb=$(new_sandbox worktree)
+run_in "$sb" full -- "$tmp/gitcopy/wt/scripts/install.mjs"
+check "install from a linked worktree exits 0" test $? -eq 0
+check "it warns that the skip list would name the worktree" out_has "$sb" "warning: $tmp/gitcopy/wt is a linked git worktree"
+sb=$(new_sandbox worktree-strict)
+snap=$(snapshot "$sb/home")
+run_in "$sb" full -- "$tmp/gitcopy/wt/scripts/install.mjs" --strict
+check "install --strict from a linked worktree exits nonzero" test $? -ne 0
+check "the refusal is the worktree error" out_has "$sb" "error: $tmp/gitcopy/wt is a linked git worktree"
+check "the worktree refusal writes nothing" test "$(snapshot "$sb/home")" = "$snap"
+check "the worktree refusal calls no mutating CLI" no_mutating_calls "$sb"
+sb=$(new_sandbox main-strict)
+run_in "$sb" full -- "$tmp/gitcopy/main/scripts/install.mjs" --strict
+check "install --strict from the main checkout exits 0" test $? -eq 0
+check "with no worktree warning" bash -c '! grep -qF "linked git worktree" "$1"' _ "$sb/out.txt"
+
+# git before 2.31 has no --path-format, and its rev-parse echoes an option it
+# does not know; this git plays that, and only a real worktree is reported.
+make_stub_dir "$tmp/stubs/oldgit" npx paseo bd bun
+{
+	printf '#!/usr/bin/env bash\nreal=%q\n' "$(command -v git)"
+	cat <<'SH'
+args=()
+for a in "$@"; do
+	case $a in --path-format=*) printf '%s\n' "$a" ;; *) args+=("$a") ;; esac
+done
+exec "$real" "${args[@]}"
+SH
+} >"$tmp/stubs/oldgit/git"
+chmod +x "$tmp/stubs/oldgit/git"
+sb=$(new_sandbox main-strict-old-git)
+run_in "$sb" oldgit -- "$tmp/gitcopy/main/scripts/install.mjs" --strict
+check "install --strict from the main checkout with a git before 2.31 exits 0" test $? -eq 0
+sb=$(new_sandbox worktree-strict-old-git)
+run_in "$sb" oldgit -- "$tmp/gitcopy/wt/scripts/install.mjs" --strict
+check "install --strict from a linked worktree with a git before 2.31 is the worktree error" \
+	out_has "$sb" "error: $tmp/gitcopy/wt is a linked git worktree (of $tmp/gitcopy/main/.git)"
 
 # --- the exclude list -------------------------------------------------------------------
 

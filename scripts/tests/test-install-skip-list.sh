@@ -15,10 +15,10 @@ skip_list_of() { # skip_list_of <sb>
 	printf '%s\n' "$1/home/.config/aidev/beads-onboarding-skip"
 }
 
-# The list's entries, one per line, as the plugin reads them: comments and
-# blank lines dropped.
+# The list's entries, one per line, as the plugin reads them: comments (a #
+# at the start of a line or after whitespace onwards) and blank lines dropped.
 entries() { # entries <sb>
-	sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$(skip_list_of "$1")" | grep -v '^$'
+	sed -E -e 's/(^|[[:space:]])#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$(skip_list_of "$1")" | grep -v '^$'
 }
 
 recorded() { # recorded <sb>  — the manifest records our entry
@@ -90,6 +90,18 @@ check "install records no entry it did not add" not recorded "$sb"
 uninstall_in "$sb" --purge --yes
 check "uninstall leaves the operator's entry for this checkout" test "$(cat "$(skip_list_of "$sb")")" = "$list"
 
+# ...also by a path with a # in it, and a comment after it: only a # at the
+# start of a line or after whitespace starts a comment.
+sb=$(new_sandbox skip-already-hash)
+mkdir -p "$(dirname "$(skip_list_of "$sb")")"
+ln -sfn "$repo" "$tmp/links/ai#dev"
+printf '%s\t# the skill source\n' "$tmp/links/ai#dev" >"$(skip_list_of "$sb")"
+list=$(cat "$(skip_list_of "$sb")")
+install_in "$sb"
+check "install over a list naming this checkout by a path with a # in it exits 0" test $? -eq 0
+check "a # inside a path is part of it: no second entry is added" test "$(cat "$(skip_list_of "$sb")")" = "$list"
+check "and none is recorded" not recorded "$sb"
+
 # --- converging ------------------------------------------------------------------------------
 
 # Our entry, deleted by the operator, comes back on the next run (as our hook entry does).
@@ -127,6 +139,21 @@ check "the interrupted install had recorded it" recorded "$sb"
 uninstall_in "$sb" --purge --yes
 check "uninstall after the interrupted install restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
+# The directory the list goes in is created and recorded before the list is
+# written: a run that stops right after writing it (here, placing the plugin
+# copy fails, as a file stands where its directory goes) leaves no directory
+# uninstall cannot find.
+sb=$(new_sandbox skip-stopped-after-write)
+mkdir -p "$(dirname "$(plugin_copy "$sb")")"
+: >"$(plugin_copy "$sb")"
+before=$(snapshot "$sb/home")
+install_in "$sb"
+check "the install stopped after writing the skip list did not finish" test $? -ne 0
+check "it had written our entry" test "$(entries "$sb")" = "$repo"
+uninstall_in "$sb" --purge --yes
+check "uninstall after it exits 0" test $? -eq 0
+check "uninstall after it restores the snapshot, the list's directory removed" test "$(snapshot "$sb/home")" = "$before"
+
 # A skip list that is not a file is refused before anything is written.
 sb=$(new_sandbox skip-not-a-file)
 mkdir -p "$(skip_list_of "$sb")"
@@ -135,5 +162,74 @@ install_in "$sb"
 check "install refuses a skip list that is a directory" test $? -ne 0
 check "the refusal names the skip list" out_has "$sb" "$(skip_list_of "$sb")"
 check "the refusal writes nothing" test "$(snapshot "$sb/home")" = "$before"
+
+# The list is written, so an XDG_CONFIG_HOME outside HOME is refused, as every
+# path the install writes outside HOME is.
+sb=$(new_sandbox skip-config-outside)
+mkdir -p "$tmp/outside-config"
+before=$(snapshot "$sb/home")
+run_in "$sb" full XDG_CONFIG_HOME="$tmp/outside-config" -- "$installer"
+check "install with XDG_CONFIG_HOME outside HOME exits nonzero" test $? -ne 0
+check "the refusal names the skip list" out_has "$sb" "refusing to write outside HOME ($sb/home): $tmp/outside-config/aidev/beads-onboarding-skip"
+check "the refusal writes nothing in HOME" test "$(snapshot "$sb/home")" = "$before"
+check "nor in XDG_CONFIG_HOME" test -z "$(ls -A "$tmp/outside-config")"
+
+# A plugin of that id registered from elsewhere is not ours, but the entry is:
+# install adds it, and uninstall removes it while that registration stays.
+sb=$(new_sandbox skip-foreign)
+printf '[{"id":"%s","path":"/opt/elsewhere","status":"running"}]' "$plugin_id" >"$sb/state/paseo-plugins.json"
+install_in "$sb"
+check "install with the plugin registered from elsewhere adds our entry" test "$(entries "$sb")" = "$repo"
+uninstall_in "$sb" --purge --yes
+check "uninstall removes our entry all the same" test ! -e "$(skip_list_of "$sb")"
+check "and leaves the registration from elsewhere running" plugin_status_is "$sb" running
+
+# --- run from a linked git worktree ------------------------------------------------------------
+#
+# The entry names the checkout the install runs from (test-install.sh has the
+# warning and the --strict refusal).
+
+check "a git copy of this checkout with a linked worktree is made" git_copy_with_worktree "$tmp/gitcopy"
+sb=$(new_sandbox skip-worktree)
+run_in "$sb" full -- "$tmp/gitcopy/wt/scripts/install.mjs"
+check "the entry of an install from a linked worktree is the worktree's root" test "$(entries "$sb")" = "$tmp/gitcopy/wt"
+
+# --- the list is read again when it is written -------------------------------------------------
+#
+# The npx stub's STUB_SKIP_APPEND edits the list while the skills install,
+# after the plan has read it.
+
+sb=$(new_sandbox skip-edited-mid-run)
+mkdir -p "$(dirname "$(skip_list_of "$sb")")"
+printf '/opt/scratch\n' >"$(skip_list_of "$sb")"
+run_in "$sb" full STUB_SKIP_APPEND=/opt/added-mid-run -- "$installer"
+check "install over a list edited during the run exits 0" test $? -eq 0
+check "the line added during the run is kept, ours after it" \
+	test "$(entries "$sb")" = "$(printf '/opt/scratch\n/opt/added-mid-run\n%s' "$repo")"
+uninstall_in "$sb" --purge --yes
+check "uninstall then removes only ours" test "$(entries "$sb")" = "$(printf '/opt/scratch\n/opt/added-mid-run')"
+
+sb=$(new_sandbox skip-listed-mid-run)
+mkdir -p "$(dirname "$(skip_list_of "$sb")")"
+printf '/opt/scratch\n' >"$(skip_list_of "$sb")"
+run_in "$sb" full STUB_SKIP_APPEND="$repo" -- "$installer"
+check "install over a list that comes to name this checkout during the run exits 0" test $? -eq 0
+check "that entry is the operator's: none of ours is added" test "$(entries "$sb")" = "$(printf '/opt/scratch\n%s' "$repo")"
+check "and none is recorded" not recorded "$sb"
+
+# A list that stops being readable during the run is refused at the write:
+# nothing of ours is written or recorded, and the plugin is not registered.
+sb=$(new_sandbox skip-unreadable-mid-run)
+mkdir -p "$(dirname "$(skip_list_of "$sb")")"
+printf '/opt/scratch\n' >"$(skip_list_of "$sb")"
+run_in "$sb" full STUB_SKIP_MODE=000 -- "$installer"
+check "install over a list made unreadable during the run exits nonzero" test $? -ne 0
+check "the refusal names the skip list" out_has "$sb" "error: $(skip_list_of "$sb") (the beads onboarding skip list) is not a readable file"
+check "nothing is recorded" not recorded "$sb"
+check "the plugin is not registered" plugin_status_is "$sb" ""
+chmod 600 "$(skip_list_of "$sb")"
+check "the operator's list is left as it was" test "$(cat "$(skip_list_of "$sb")")" = /opt/scratch
+uninstall_in "$sb" --purge --yes
+check "uninstall then leaves the operator's list" test "$(cat "$(skip_list_of "$sb")")" = /opt/scratch
 
 summary

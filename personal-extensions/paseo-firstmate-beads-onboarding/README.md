@@ -16,7 +16,7 @@ and the memory store simply exists.
 | --- | --- |
 | `index.server.ts` + `paseo-plugin.json` | **Paseo daemon plugin** (the deterministic half): subscribes to `workspace.created`, dedups per project, resolves the project's base via the Paseo API's project record (`projectRootPath` — never the event's cwd, which for crewmate worktrees is the worktree), skips a base on the operator's skip list (below), and runs `bd ready` → `bd init --quiet` at the base. Nothing else: no commits, no files beyond what `bd init` itself produces (init commits its own scaffolding — that is what carries the agent-facing files into worktrees and clones). Absent `bd`, a failed check, or a failed init each log a warning (`paseo plugin logs firstmate-beads-onboarding`) and leave the project retryable on its next workspace event. |
 | `install-captain-orders.sh` | **Standing orders** (the behavioral half): appends the marked memory rules block to the mate's `data/captain.md` (never overwritten by the plugin, outranks the charter, read every session) and creates the mate-global memory database in the home (`bd init --quiet --stealth`). Idempotent; resolves the mate's home exactly as firstmate 0.3.4 does (`plugin-data/firstmate/config.json` → `~` expansion → default → legacy `plugins/firstmate/home`) and refuses politely when no home exists. |
-| `tests/run.sh` | Offline verification: 16 handler tests + 2 build checks + 25 installer checks (see below). |
+| `tests/run.sh` | Offline verification: 17 handler tests + 2 build checks + 25 installer checks (see below). |
 
 ## Usage
 
@@ -55,12 +55,18 @@ absolute path in the daemon's environment, else
 # one project base per line: an absolute path, or ~/ for the daemon's HOME
 /home/paseo/workspace/ai/aiDev
 ~/scratch/no-beads-here   # a comment after a path is fine too
+/srv/build#2              # a # inside a path is part of it
 ```
 
 - The plugin reads the list on every `workspace.created` event, before any
   `bd` call, and compares the **real path** of each entry with the real path of
   the project's resolved base, so a symlink on either side still matches. A
   path inside the base, or a longer one, does not.
+- A `#` at the start of a line or after whitespace starts a comment that runs
+  to the end of the line; a `#` inside a path is part of the path. The
+  installer reads the list by the same rule. Before #37 a line like
+  `/srv/proj#note` meant `/srv/proj`; it now names a path that contains `#`,
+  so rewrite such a line as `/srv/proj #note`.
 - A listed project is skipped with a log line and is never initialized. It is
   not marked done, so once its line is removed the project's next workspace
   event onboards it as usual.
@@ -120,10 +126,11 @@ the superseded prototype, re-implemented fresh):
   not attempting init; unknown project id running nothing; and no plugin-owned
   commits or stray writes. The skip list: a listed base is never initialized;
   matching by real path with a symlink on either side, and a `~/` entry;
-  other entries, a longer path and a commented-out line do not skip; an entry
-  removed later makes the project eligible on its next event; a missing,
-  empty or comments-only list changes nothing; an unreadable list initializes
-  nothing and the project retries.
+  a `#` inside a path is part of the entry, and one after whitespace starts
+  a comment; other entries, a longer path and a commented-out line do not
+  skip; an entry removed later makes the project eligible on its next event;
+  a missing, empty or comments-only list changes nothing; an unreadable list
+  initializes nothing and the project retries.
 - **Build seam** (`tests/build.test.mjs`): the daemon builds the plugin from
   its source wherever it is installed, on every load, and resolves each import
   there, so `index.server.ts` imports only what the host supplies (Node

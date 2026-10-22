@@ -8,14 +8,16 @@
 //   paths()                   every path it writes (after preconditions)
 //   plan(m)                   → { step, skip, ... } (step: see pluginStep)
 //   describe(plan)            its lines, printed by --dry-run
-//   install(m, plan, report, checkpoint)  add this checkout to the skip list,
-//                             place the copy, record the plugin, make the
-//                             step's daemon call
+//   install(m, plan, report, checkpoint)  add this checkout to the skip list;
+//                             once it is listed, place the copy, record the
+//                             plugin, make the step's daemon call
 //   reversePreconditions(m, report, dryRun)  uninstall's checks: paseo and the
 //                             daemon's plugin list, when a plugin is recorded
 //   reversePlan(m)            uninstall's --dry-run lines
-//   reverse(m, fail)          remove each recorded plugin's registration, then
-//                             its record; then our skip-list entry
+//   reverse(m, fail)          for each recorded plugin, remove the registration
+//                             Paseo lists under its id from its recorded copy,
+//                             if there is one, then the record; then our
+//                             skip-list entry
 //
 // The daemon builds a directory plugin from its source where it lies, on every
 // load, and keeps one whose build failed registered (Paseo's plugins/compiler.js
@@ -131,8 +133,8 @@ export function onboardingPlugin(ctx) {
 
 		describe: (plan) => [skip.describe(plan.skip), describeStep(plan.step)],
 
-		install(m, { step, skip: skipPlan, planned, record, buildSha256 }, report, checkpoint) {
-			skip.install(m, skipPlan, report, checkpoint);
+		install(m, { step, planned, record, buildSha256 }, report, checkpoint) {
+			if (!skip.install(m, report, checkpoint)) return;
 			report.say(describeStep(step));
 			if (step.kind === 'foreign') return;
 			// Recorded, and checkpointed, before the daemon is asked: a failed

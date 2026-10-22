@@ -7,7 +7,7 @@ they call, and the offline tests for all of it.
 | File | Role |
 | --- | --- |
 | `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
-| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), and the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`). |
+| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`), and the manifest's changes (`tests/manifest.test.mjs`). |
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
 | `lib/onboarding-plugin.mjs` | The beads onboarding plugin step (#33): the copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
@@ -28,7 +28,8 @@ Paseo) and nothing else from npm.
 ```sh
 node scripts/install.mjs              # install, or converge an existing install
 node scripts/install.mjs --dry-run    # print the plan, write nothing
-node scripts/install.mjs --strict     # also fail when bun is missing
+node scripts/install.mjs --strict     # also fail when bun is missing, or when
+                                      # run from a linked git worktree
 
 node scripts/uninstall.mjs            # reverse what the manifest records
 node scripts/uninstall.mjs --dry-run  # print the plan, touch nothing
@@ -40,6 +41,12 @@ Run them from the main checkout. The skills are copied from it, and the
 onboarding plugin is copied out of it, so nothing installed depends on the
 checkout staying where it is.
 
+To roll back to an older version of this repository, uninstall with the
+checkout that installed, then check out the older version and install from
+it. An older checkout's `uninstall.mjs` cannot read a manifest of a newer
+schema version (see the manifest, below): it refuses, names the version, and
+touches nothing.
+
 ### What install does, in order
 
 1. **Preconditions**, all checked before anything is written; any failure
@@ -48,9 +55,15 @@ checkout staying where it is.
    `paseo plugin ls`; the first mate's home exists (launch the mate once);
    every path below resolves inside `$HOME` after following symlinks
    (`CLAUDE_CONFIG_DIR`, `PASEO_HOME` and the XDG variables are honored only
-   then); `settings.json` parses. `bun` is reported: missing, it is a warning
-   naming poteto-mode's `watch-pr` and `ship-pr` (the Shipping and Babysit
-   playbooks), and an error only under `--strict`.
+   then); `settings.json` parses. The install writes the skip list (below)
+   under `XDG_CONFIG_HOME`, so an `XDG_CONFIG_HOME` outside `$HOME` is
+   refused, though the exclude list there is only read. `bun` is reported:
+   missing, it is a warning naming poteto-mode's `watch-pr` and `ship-pr`
+   (the Shipping and Babysit playbooks), and an error only under `--strict`.
+   A run from a linked git worktree (`git rev-parse --git-dir` differs from
+   `--git-common-dir`) is reported the same way, a warning and an error only
+   under `--strict`, because the skip-list entry (below) would name the
+   worktree.
 2. **Skills**: every skill in `skills/` minus the exclude list, through the
    pinned skills CLI, user level, Claude Code only, as copies:
    `npx --yes skills@1.7.4 add <repo>/skills -g -y --copy -a claude-code -s <names…>`.
@@ -132,22 +145,38 @@ excluded skill only warns. A name that is not a skill warns.
 
 `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip`, operator-owned:
 the project bases the onboarding plugin never initializes. One absolute or
-`~/` path per line, `#` starts a comment; the plugin reads it on every
+`~/` path per line; a `#` at the start of a line or after whitespace starts a
+comment, so a `#` inside a path is part of the path. Before #37 a line like
+`/srv/proj#note` meant `/srv/proj`; it now names a path that contains `#`, so
+rewrite such a line as `/srv/proj #note`. The plugin reads the list on every
 `workspace.created` event and compares real paths, so a symlinked path
 matches. A listed project is skipped with a log line, and becomes eligible
 again on its next workspace event once its line is gone. The full rules are
 in the plugin's README.
 
 By default the install adds this checkout's root (how aiDev carries beads
-under its whitelist `.gitignore` is not decided yet): it creates the file if
-absent, with a two-line comment header, or appends one line to the
-operator's, and records the entry in the manifest before writing it. A list
-that already names this checkout, by any path to it, is the operator's:
-nothing is added and nothing recorded. Our entry, deleted by the operator,
-comes back on the next run. Uninstall removes only our line; the operator's
-lines stay byte for byte, and a list the install created and that holds
-nothing else is deleted. Run the install from the checkout Paseo knows as
-the project: the entry is the root of the checkout the install runs from.
+under its whitelist `.gitignore` is not decided yet):
+
+- The install creates the file if absent, with a two-line comment header, or
+  appends one line to the operator's, and records the entry in the manifest
+  before writing it.
+- It reads the list again just before writing, so a line the operator adds
+  during the run is kept and counts. A list that can no longer be read then
+  stops the install with an error: nothing is written or recorded, and the
+  plugin is not registered.
+- A list that already names this checkout, by any path to it, is the
+  operator's: nothing is added and nothing recorded.
+- Our entry, deleted by the operator, comes back on the next run.
+- Uninstall removes only our line. The operator's lines stay byte for byte,
+  and a list the install created and that holds nothing else is deleted.
+- Uninstall removes our line even when the plugin of that id is registered
+  from elsewhere (not ours, so uninstall leaves it running). That plugin may
+  then onboard this checkout on its next workspace event, unless the
+  operator lists it.
+- The entry is the root of the checkout the install runs from, so run the
+  install from the checkout Paseo knows as the project. From a linked git
+  worktree that root is the worktree, not the base, so the install warns,
+  and under `--strict` refuses before anything is written.
 
 ### Every path written
 
@@ -168,7 +197,7 @@ the project: the entry is the root of the checkout the install runs from.
 | `<mate>/data/captain.md` | the `aidev-standing-orders` and `paseo-beads-onboarding` blocks (written by the two orders installers) | both blocks and the headings in front of them removed |
 | `<mate>/.beads`, `.beads.gate.lock`, `.git` | the mate's home memory database, when `bd init` created it during install | kept; `--purge` deletes them |
 | `<data>/paseo-plugins/firstmate-beads-onboarding/` | the plugin source copy, registered in Paseo by `paseo plugin install` | `paseo plugin remove` (only a registration Paseo lists from this copy; a manifest from before #33 that recorded the copy but no plugin is upgraded to record it), then the copy is deleted |
-| `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip` | one line: this checkout's root (the file is created if absent) | our line removed; the file is deleted if the install created it and nothing else is in it |
+| `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip` | one line: this checkout's root (the file is created if absent) | our line removed, also when the plugin's registration is not ours; the file is deleted if the install created it and nothing else is in it |
 | `<data>/licenses/` | NOTICE, provenance manifest, licenses | deleted |
 | `<state>/install-manifest.json` | the manifest | deleted last |
 | `<state>/backups/` | a copy of every pre-existing file the install modified | consumed by uninstall; a backup it cannot restore is kept and reported |
@@ -204,8 +233,8 @@ install failed at the daemon records the plugin's copy but no `plugin` item,
 and reading it adds the item, with the copy directory's name as the id
 (both installers name it after the id); the next save writes the current
 version. Version 3 (#34) only adds `skip-entry`, so a version 2 is read as
-is; an older checkout's uninstall refuses a version 3 rather than leave our
-skip-list entry behind.
+is; the version went up so that an older checkout's uninstall refuses it (the
+rollback note above) rather than leave our skip-list entry behind.
 
 ### The orders block upgrade story
 
@@ -279,4 +308,5 @@ bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alo
 bash scripts/tests/test-install-plugin.sh    # their onboarding plugin step alone
 bash scripts/tests/test-install-skip-list.sh # its skip-list entry alone
 node --test scripts/tests/onboarding-plugin.test.mjs   # the plugin step's decision table
+node --test scripts/tests/manifest.test.mjs            # the manifest's changes
 ```
