@@ -3,35 +3,29 @@
 //
 //   preconditions(m, report)  install's read-only checks: the plugin's id and
 //                             file list, the daemon's plugin list, a
-//                             registration from a copy that has since moved,
-//                             the skip list
+//                             registration from a copy that has since moved
 //   paths()                   every path it writes (after preconditions)
-//   plan(m)                   → { step, skip, ... } (step: see pluginStep)
+//   plan(m)                   → { step, ... } (step: see pluginStep)
 //   describe(plan)            its lines, printed by --dry-run
-//   install(m, plan, report, checkpoint)  add this checkout to the skip list;
-//                             once it is listed, place the copy, record the
-//                             plugin, make the step's daemon call
+//   install(m, plan, report, checkpoint)  place the copy, record the plugin,
+//                             make the step's daemon call
 //   reversePreconditions(m, report, dryRun)  uninstall's checks: paseo and the
 //                             daemon's plugin list, when a plugin is recorded
 //   reversePlan(m)            uninstall's --dry-run lines
 //   reverse(m, fail)          for each recorded plugin, remove the registration
 //                             Paseo lists under its id from its recorded copy,
-//                             if there is one, then the record; then our
-//                             skip-list entry
+//                             if there is one, then the record
 //
 // The daemon builds a directory plugin from its source where it lies, on every
 // load, and keeps one whose build failed registered (Paseo's plugins/compiler.js
 // and plugins/index.js). The copy is therefore the files the plugin's
 // package.json lists, nothing installed beside them, and the plugin is recorded
-// before the daemon is asked. This checkout is on the plugin's skip list
-// (onboarding-skip-list.mjs) before the plugin is registered, and until it is
-// removed, so the plugin never onboards the skill source itself (#34).
+// before the daemon is asked.
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { ONBOARDING_PLUGIN_DIR, findOnPath, ownedFileAction, placeOwnedFile, run, sha256 } from './aidev-install.mjs';
 import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
-import { onboardingSkipList } from './onboarding-skip-list.mjs';
 
 // The daemon's plugin registrations as { id, path, status }, or null when the
 // daemon does not answer (`paseo plugin ls --json`). `path` is the directory
@@ -96,7 +90,6 @@ export function onboardingPlugin(ctx) {
 	let files = [];
 	let plugins = null;
 	const source = (name) => join(ONBOARDING_PLUGIN_DIR, name);
-	const skip = onboardingSkipList(ctx);
 
 	return {
 		preconditions(m, report) {
@@ -114,10 +107,9 @@ export function onboardingPlugin(ctx) {
 			// elsewhere: the data directory moved, and a new copy would orphan it.
 			const moved = m && plugins && first(m, 'plugin', (i) => i.id === id && i.path !== copy && registrationOf(plugins, i)?.ours);
 			if (moved) report.error(`plugin ${id} is registered from ${moved.path}, which an earlier install recorded, but the data directory is now ${ctx.dataDir} — run uninstall first, then install`);
-			skip.preconditions(report);
 		},
 
-		paths: () => [skip.path, ...files.map((f) => f.path)],
+		paths: () => files.map((f) => f.path),
 
 		// The copy's files as placing them will leave them (an edited file of
 		// ours is kept), and their hash: what the daemon builds when it next
@@ -128,13 +120,12 @@ export function onboardingPlugin(ctx) {
 			const buildSha256 = sha256(files.map((f, i) => `${basename(f.path)} ${sha256(planned[i].bytes)}\n`).join(''));
 			const record = first(m, 'plugin', (i) => i.id === id && i.path === copy);
 			const registration = registrationOf(plugins, { id, path: copy });
-			return { step: pluginStep({ id, copy, registration, stale: record?.buildSha256 !== buildSha256 }), skip: skip.plan(m), planned, record, buildSha256 };
+			return { step: pluginStep({ id, copy, registration, stale: record?.buildSha256 !== buildSha256 }), planned, record, buildSha256 };
 		},
 
-		describe: (plan) => [skip.describe(plan.skip), describeStep(plan.step)],
+		describe: (plan) => [describeStep(plan.step)],
 
 		install(m, { step, planned, record, buildSha256 }, report, checkpoint) {
-			if (!skip.install(m, report, checkpoint)) return;
 			report.say(describeStep(step));
 			if (step.kind === 'foreign') return;
 			// Recorded, and checkpointed, before the daemon is asked: a failed
@@ -157,7 +148,7 @@ export function onboardingPlugin(ctx) {
 			if (plugins === null) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
 		},
 
-		reversePlan: (m) => [...items(m, 'plugin').map((p) => `paseo plugin remove ${p.id}, if Paseo lists it from ${p.path}`), ...skip.reversePlan(m)],
+		reversePlan: (m) => items(m, 'plugin').map((p) => `paseo plugin remove ${p.id}, if Paseo lists it from ${p.path}`),
 
 		// Only a registration from the recorded copy is ours; the record goes
 		// once that registration is gone, or Paseo has none.
@@ -169,7 +160,6 @@ export function onboardingPlugin(ctx) {
 				}
 				drop(m, p);
 			}
-			skip.reverse(m);
 		},
 	};
 }

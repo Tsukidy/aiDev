@@ -11,9 +11,9 @@
 // listed.
 //
 // The install adds this checkout's root, so the plugin never onboards the
-// skill source itself; the entry is recorded before it is written, and the
-// plugin step (onboarding-plugin.mjs) adds it before it registers the plugin.
-// Uninstall removes that one line, after the registration is gone. An entry
+// skill source itself; the entry is recorded before it is written. Install
+// adds it before the plugin step registers the plugin, and stops if it cannot;
+// uninstall removes that one line after the registration is gone. An entry
 // the operator already has for this checkout is theirs: nothing is added,
 // nothing recorded.
 
@@ -105,16 +105,12 @@ export function onboardingSkipList(ctx) {
 		// and counts. The entry is recorded and the list's directory created
 		// before the checkpoint saves the manifest, so an interrupted write
 		// leaves nothing uninstall cannot find. Our entry, deleted since,
-		// comes back. Returns whether this checkout is listed: the plugin is
-		// registered only when it is.
+		// comes back.
 		install(m, report, checkpoint) {
 			const { action, record, text } = read(m);
-			if (unreadable(text)) {
-				report.error(unreadableError);
-				return false;
-			}
+			if (unreadable(text)) return report.error(unreadableError);
 			report.say(describe({ action }));
-			if (action !== 'add') return true;
+			if (action !== 'add') return;
 			const next = appendEntry(text, root);
 			const item = skipEntryItem(path, root, text !== null && (record?.existedBefore ?? true), next.before);
 			if (record) replace(m, record, item);
@@ -122,7 +118,6 @@ export function onboardingSkipList(ctx) {
 			mkdirSync(dirname(path), { recursive: true });
 			checkpoint();
 			writeShared(path, next.text);
-			return true;
 		},
 
 		reversePlan: (m) => items(m, 'skip-entry').map((i) => `remove ${i.entry} from the beads onboarding skip list ${i.path}`),

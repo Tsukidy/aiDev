@@ -58,6 +58,7 @@ import {
 } from './lib/aidev-install.mjs';
 import { dirItem, drop, ensure, items, newManifest } from './lib/manifest.mjs';
 import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
+import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { ordersStep } from './lib/orders.mjs';
 import { installTargets } from './lib/targets.mjs';
 
@@ -65,6 +66,7 @@ const report = makeReport('install');
 const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'install');
 const ctx = resolveContext(process.env);
 const orders = ordersStep(ctx);
+const skipList = onboardingSkipList(ctx);
 const plugin = onboardingPlugin(ctx);
 
 // --- 1. preconditions -------------------------------------------------------------
@@ -89,6 +91,7 @@ try {
 	report.error(e.message);
 }
 plugin.preconditions(m, report);
+skipList.preconditions(report);
 
 const targets = installTargets(ctx);
 const licenseFiles = readdirSync(SKILLS_SRC)
@@ -102,6 +105,7 @@ const written = [
 	ctx.manifestPath,
 	join(ctx.backupsDir, 'x'),
 	...licenseFiles.map((f) => f.dest),
+	skipList.path,
 	...plugin.paths(),
 	...targets.flatMap((t) => t.paths()),
 	...orders.paths(),
@@ -138,6 +142,7 @@ const plans = targets.map((t) => {
 	}
 	return plan;
 });
+const skipPlan = skipList.plan(m);
 const pluginPlan = plugin.plan(m);
 
 if (flags['dry-run']) {
@@ -145,6 +150,7 @@ if (flags['dry-run']) {
 		...targets.flatMap((t, i) => t.describe(plans[i])),
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
 		...orders.describe(),
+		skipList.describe(skipPlan),
 		...plugin.describe(pluginPlan),
 		`manifest ${ctx.manifestPath}`,
 	];
@@ -185,7 +191,12 @@ for (const f of licenseFiles) placeOwnedFile(ctx, m, report, checkpoint, { path:
 orders.install(m, report, checkpoint);
 if (report.errors.length) finish(1);
 
-// Step 8b: the onboarding plugin.
+// Step 8b: this checkout on the beads onboarding skip list, so the plugin
+// never onboards it, before the plugin is registered (#34).
+skipList.install(m, report, checkpoint);
+if (report.errors.length) finish(1);
+
+// Step 8c: the onboarding plugin.
 plugin.install(m, pluginPlan, report, checkpoint);
 if (report.errors.length) finish(1);
 

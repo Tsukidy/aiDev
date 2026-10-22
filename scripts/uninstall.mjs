@@ -37,6 +37,7 @@ import {
 } from './lib/aidev-install.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
 import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
+import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { targetByName } from './lib/targets.mjs';
 
 const report = makeReport('uninstall');
@@ -57,6 +58,7 @@ const owned = ownedFiles(m);
 const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
 const plugin = onboardingPlugin(ctx);
+const skipList = onboardingSkipList(ctx);
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -81,6 +83,7 @@ if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
 		...plugin.reversePlan(m),
+		...skipList.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -97,9 +100,10 @@ const fail = (msg) => {
 	report.die(`${msg}; the manifest keeps what is left — fix and re-run uninstall`);
 };
 
-// --- the onboarding plugin, before its source copy goes -------------------------------
+// --- the onboarding plugin, before its source copy goes; then our skip-list entry ------
 
 plugin.reverse(m, fail);
+skipList.reverse(m);
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------
