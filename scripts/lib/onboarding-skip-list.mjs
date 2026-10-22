@@ -12,10 +12,25 @@
 //
 // The install adds this checkout's root, so the plugin never onboards the
 // skill source itself; the entry is recorded before it is written. Install
-// adds it before the plugins step (paseo-plugins.mjs) registers the plugin,
+// adds it before the plugins step (paseo-plugins.mjs) registers any plugin,
 // and stops if it cannot; uninstall removes that one line after the
-// registration is gone. An entry the operator already has for this checkout
-// is theirs: nothing is added, nothing recorded.
+// registrations are gone. An entry the operator already has for this
+// checkout is theirs: nothing is added, nothing recorded.
+//
+// onboardingSkipList(ctx) is the step, a subset of the plugins step's
+// contract: runtime-neutral, outside the target registry, one path:
+//
+//   preconditions(report)  install's read-only check: the list, if there is
+//                          one, is a readable file
+//   path                   the one path it writes
+//   plan(m)                → { action } (action: see skipAction)
+//   describe(plan)         its line, printed by --dry-run
+//   install(m, report, checkpoint)  read the list afresh; when it needs our
+//                          entry: record it, checkpoint, append it
+//   reversePlan(m)         uninstall's --dry-run lines
+//   reverse(m)             for each recorded entry, take back its line (and
+//                          the list we created, once it holds only what we
+//                          wrote), then the record
 
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
