@@ -40,6 +40,12 @@ Run them from the main checkout. The skills are copied from it, and the
 onboarding plugin is copied out of it, so nothing installed depends on the
 checkout staying where it is.
 
+To roll back to an older version of this repository, uninstall with the
+checkout that installed, then check out the older version and install from
+it. An older checkout's `uninstall.mjs` cannot read a manifest of a newer
+schema version (see the manifest, below): it refuses, names the version, and
+touches nothing.
+
 ### What install does, in order
 
 1. **Preconditions**, all checked before anything is written; any failure
@@ -204,8 +210,8 @@ install failed at the daemon records the plugin's copy but no `plugin` item,
 and reading it adds the item, with the copy directory's name as the id
 (both installers name it after the id); the next save writes the current
 version. Version 3 (#34) only adds `skip-entry`, so a version 2 is read as
-is; an older checkout's uninstall refuses a version 3 rather than leave our
-skip-list entry behind.
+is; the version went up so that an older checkout's uninstall refuses it (the
+rollback note above) rather than leave our skip-list entry behind.
 
 ### The orders block upgrade story
 
