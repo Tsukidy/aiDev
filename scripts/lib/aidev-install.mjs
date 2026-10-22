@@ -281,10 +281,12 @@ export function repoCommit() {
 
 // The git directory shared by every checkout of the repository when this
 // checkout is a linked worktree of it; null for a main checkout, or no git.
+// git prints a relative path relative to REPO; --path-format=absolute would
+// need git 2.31, and an older rev-parse echoes it back as if it were a path.
 export function worktreeCommonDir() {
-	const r = spawnSync('git', ['-C', REPO, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], { encoding: 'utf8' });
+	const r = spawnSync('git', ['-C', REPO, 'rev-parse', '--git-dir', '--git-common-dir'], { encoding: 'utf8' });
 	if (r.status !== 0) return null;
-	const [dir, common] = r.stdout.trim().split('\n');
+	const [dir, common] = r.stdout.trim().split('\n').map((p) => resolve(REPO, p));
 	return dir === common ? null : common;
 }
 

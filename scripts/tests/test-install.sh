@@ -353,6 +353,28 @@ run_in "$sb" full -- "$tmp/gitcopy/main/scripts/install.mjs" --strict
 check "install --strict from the main checkout exits 0" test $? -eq 0
 check "with no worktree warning" bash -c '! grep -qF "linked git worktree" "$1"' _ "$sb/out.txt"
 
+# git before 2.31 has no --path-format, and its rev-parse echoes an option it
+# does not know; this git plays that, and only a real worktree is reported.
+make_stub_dir "$tmp/stubs/oldgit" npx paseo bd bun
+{
+	printf '#!/usr/bin/env bash\nreal=%q\n' "$(command -v git)"
+	cat <<'SH'
+args=()
+for a in "$@"; do
+	case $a in --path-format=*) printf '%s\n' "$a" ;; *) args+=("$a") ;; esac
+done
+exec "$real" "${args[@]}"
+SH
+} >"$tmp/stubs/oldgit/git"
+chmod +x "$tmp/stubs/oldgit/git"
+sb=$(new_sandbox main-strict-old-git)
+run_in "$sb" oldgit -- "$tmp/gitcopy/main/scripts/install.mjs" --strict
+check "install --strict from the main checkout with a git before 2.31 exits 0" test $? -eq 0
+sb=$(new_sandbox worktree-strict-old-git)
+run_in "$sb" oldgit -- "$tmp/gitcopy/wt/scripts/install.mjs" --strict
+check "install --strict from a linked worktree with a git before 2.31 is the worktree error" \
+	out_has "$sb" "error: $tmp/gitcopy/wt is a linked git worktree (of $tmp/gitcopy/main/.git)"
+
 # --- the exclude list -------------------------------------------------------------------
 
 sb=$(new_sandbox exclude)
