@@ -38,7 +38,7 @@ import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
 // running | failed | disabled (Paseo's resolvePluginStatus): disabled means
 // the plugin, or all plugins, are switched off, and Paseo then refuses to
 // reload it; failed means its build or start failed, and it stays registered.
-export function daemonPlugins(ctx) {
+function daemonPlugins(ctx) {
 	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
 	if (r.status !== 0) return null;
 	try {
