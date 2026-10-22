@@ -173,6 +173,27 @@ check "install refuses a skip list that is a directory" test $? -ne 0
 check "the refusal names the skip list" out_has "$sb" "$(skip_list_of "$sb")"
 check "the refusal writes nothing" test "$(snapshot "$sb/home")" = "$before"
 
+# The list is written, so an XDG_CONFIG_HOME outside HOME is refused, as every
+# path the install writes outside HOME is.
+sb=$(new_sandbox skip-config-outside)
+mkdir -p "$tmp/outside-config"
+before=$(snapshot "$sb/home")
+run_in "$sb" full XDG_CONFIG_HOME="$tmp/outside-config" -- "$installer"
+check "install with XDG_CONFIG_HOME outside HOME exits nonzero" test $? -ne 0
+check "the refusal names the skip list" out_has "$sb" "refusing to write outside HOME ($sb/home): $tmp/outside-config/aidev/beads-onboarding-skip"
+check "the refusal writes nothing in HOME" test "$(snapshot "$sb/home")" = "$before"
+check "nor in XDG_CONFIG_HOME" test -z "$(ls -A "$tmp/outside-config")"
+
+# A plugin of that id registered from elsewhere is not ours, but the entry is:
+# install adds it, and uninstall removes it while that registration stays.
+sb=$(new_sandbox skip-foreign)
+printf '[{"id":"%s","path":"/opt/elsewhere","status":"running"}]' "$plugin_id" >"$sb/state/paseo-plugins.json"
+install_in "$sb"
+check "install with the plugin registered from elsewhere adds our entry" test "$(entries "$sb")" = "$repo"
+uninstall_in "$sb" --purge --yes
+check "uninstall removes our entry all the same" test ! -e "$(skip_list_of "$sb")"
+check "and leaves the registration from elsewhere running" plugin_status_is "$sb" running
+
 # --- run from a linked git worktree: a warning, an error under --strict ----------------------
 #
 # The entry names the checkout the install runs from, and a worktree is not
