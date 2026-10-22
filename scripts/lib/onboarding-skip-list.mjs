@@ -12,8 +12,9 @@
 //
 // The install adds this checkout's root, so the plugin never onboards the
 // skill source itself; the entry is recorded before it is written. Install
-// adds it before the plugin step registers the plugin, and stops if it cannot;
-// uninstall removes that one line after the registration is gone. An entry
+// adds it before the plugins step (paseo-plugins.mjs) registers the plugin,
+// and stops if it cannot; uninstall removes that one line after the
+// registration is gone. An entry
 // the operator already has for this checkout is theirs: nothing is added,
 // nothing recorded.
 
