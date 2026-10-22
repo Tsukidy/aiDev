@@ -132,7 +132,7 @@ check "uninstall after that restores the snapshot" test "$(snapshot "$sb/home")"
 # interrupted at the plugin's registration has already skipped this checkout.
 sb=$(new_sandbox skip-interrupted)
 before=$(snapshot "$sb/home")
-(run_in "$sb" full STUB_FAIL=paseo-interrupt -- "$installer") 2>/dev/null # the shell's "Killed" notice
+(run_in "$sb" full STUB_INTERRUPT=paseo-install -- "$installer") 2>/dev/null # the shell's "Killed" notice
 check "the interrupted install did not finish" test $? -ne 0
 check "the interrupted install had written our entry" test "$(entries "$sb")" = "$repo"
 check "the interrupted install had recorded it" recorded "$sb"

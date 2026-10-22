@@ -4,9 +4,11 @@
 // mode), paseo (a plugin list kept outside the sandbox, in STUB_STATE), bd
 // (`ready` and `init`) and bun. Every call is logged to STUB_LOG as
 // `<name>|<args>|<cwd>`; STUB_FAIL lists `<name>-<command>` calls to fail,
-// plus paseo-build (every plugin build fails) and paseo-interrupt (a plugin
-// install or reload kills its caller once the daemon has built the plugin and
-// saved its status). The build applies the plugin's own host-supplied rule.
+// plus paseo-build (every plugin build fails). STUB_INTERRUPT lists
+// `<name>-<command>` calls that, once done (a plugin install or reload once
+// the daemon has built the plugin and saved its status), SIGKILL install.mjs
+// and every process between it and the stub, as Ctrl-C would. The build
+// applies the plugin's own host-supplied rule.
 // `skills add` plays the operator editing the beads onboarding skip list
 // mid-run, after the installer's plan has read it: STUB_SKIP_APPEND appends
 // that line to the list, then STUB_SKIP_MODE chmods it.
@@ -20,6 +22,25 @@ const home = process.env.HOME;
 const state = process.env.STUB_STATE;
 mkdirSync(state, { recursive: true });
 const fail = (process.env.STUB_FAIL ?? '').split(',');
+const interrupts = (process.env.STUB_INTERRUPT ?? '').split(',');
+
+// Linux only: the ancestors come from /proc.
+function killInstaller() {
+	for (let pid = process.ppid; pid > 1; ) {
+		const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+		const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
+		const installer = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').some((a) => a.endsWith('/install.mjs'));
+		process.kill(pid, 'SIGKILL');
+		if (installer) return;
+		pid = ppid;
+	}
+	throw new Error('install.mjs is not among the stub\'s ancestors');
+}
+
+const exit = (call, code) => {
+	if (interrupts.includes(call)) killInstaller();
+	process.exit(code);
+};
 
 function listAfter(flag) {
 	const i = args.indexOf(flag);
@@ -60,7 +81,7 @@ if (name === 'npx') {
 	} else process.exit(64);
 	mkdirSync(join(lockPath, '..'), { recursive: true });
 	writeFileSync(lockPath, JSON.stringify(lock, null, 2));
-	process.exit(0);
+	exit(`skills-${cmd}`, 0);
 }
 
 if (name === 'paseo') {
@@ -82,8 +103,7 @@ if (name === 'paseo') {
 	const start = (p) => {
 		p.status = builds(p.path) ? 'running' : 'failed';
 		save();
-		if (fail.includes('paseo-interrupt')) process.kill(process.ppid, 'SIGKILL'); // the installer, as by Ctrl-C, once the daemon is done
-		if (p.status === 'failed') process.exit(1);
+		if (p.status === 'failed') exit(`paseo-${cmd}`, 1);
 	};
 	if (cmd === 'ls') {
 		process.stdout.write(JSON.stringify(plugins));
@@ -106,19 +126,19 @@ if (name === 'paseo') {
 		}
 		start(p);
 	} else process.exit(64);
-	process.exit(0);
+	exit(`paseo-${cmd}`, 0);
 }
 
 if (name === 'bd') {
 	if (fail.includes(`bd-${args[0]}`)) process.exit(1);
-	if (args[0] === 'ready') process.exit(existsSync('.beads') ? 0 : 1);
+	if (args[0] === 'ready') exit('bd-ready', existsSync('.beads') ? 0 : 1);
 	if (args[0] === 'init') {
 		// bd init --stealth in a non-git directory also runs git init
 		// (docs/research/beads-cli-memory-surface.md A2).
 		mkdirSync('.beads');
 		writeFileSync('.beads/config.yaml', 'stub\n');
 		if (!existsSync('.git')) mkdirSync('.git');
-		process.exit(0);
+		exit('bd-init', 0);
 	}
 	process.exit(64);
 }
