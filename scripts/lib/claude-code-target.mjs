@@ -193,19 +193,21 @@ export function claudeCodeTarget(ctx) {
 		install(m, plan, report, checkpoint) {
 			// Step 2. Skills through the skills CLI: user level (-g), Claude Code
 			// only, copies (with one agent the CLI copies anyway; --copy says so).
-			// Every skill it is asked for is recorded, and checkpointed, first:
-			// killed mid-copy, it leaves skills a re-run must know as ours.
+			// Remove creates nothing. Every skill the add is asked for is
+			// recorded, and checkpointed, before it: killed mid-copy, it leaves
+			// skills a re-run must know as ours. The checkpoint comes before every
+			// write of this target, add or not, since it records the directories
+			// the target may create.
 			ensure(m, skillsLockItem(ctx.skillsLockPath, existsSync(ctx.skillsLockPath)), () => true);
+			if (plan.remove.length) {
+				const r = skillsCli(ctx, ['remove', '-g', '-y', '-a', NAME, '-s', ...plan.remove]);
+				if (r.status !== 0) return report.error(`skills CLI remove failed (exit ${r.status})`);
+				for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.remove.includes(i.name))) drop(m, i);
+			}
 			for (const n of plan.add) ensure(m, skillItem(n, NAME, join(skillsDir, n)), (i) => i.agent === NAME && i.name === n);
 			checkpoint();
 			let failed = false;
-			if (plan.remove.length) {
-				const r = skillsCli(ctx, ['remove', '-g', '-y', '-a', NAME, '-s', ...plan.remove]);
-				failed = r.status !== 0;
-				if (failed) report.error(`skills CLI remove failed (exit ${r.status})`);
-				else for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.remove.includes(i.name))) drop(m, i);
-			}
-			if (!failed && plan.add.length) {
+			if (plan.add.length) {
 				const r = skillsCli(ctx, ['add', SKILLS_SRC, '-g', '-y', '--copy', '-a', NAME, '-s', ...plan.add]);
 				failed = r.status !== 0;
 				if (failed) report.error(`skills CLI add failed (exit ${r.status}); re-run install to converge`);
