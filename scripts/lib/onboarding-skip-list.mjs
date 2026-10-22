@@ -82,7 +82,8 @@ export function onboardingSkipList(ctx) {
 		if (action === 'current') return `${root} is on the beads onboarding skip list ${path} already`;
 		return `${path} already lists ${root} (the operator's entry) — left as is`;
 	};
-	const unreadable = `${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`;
+	const unreadable = (text) => text === null && lexists(path);
+	const unreadableError = `${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`;
 	const read = (m) => {
 		const text = readText(path);
 		const record = ours(m);
@@ -93,7 +94,7 @@ export function onboardingSkipList(ctx) {
 		path,
 
 		preconditions(report) {
-			if (lexists(path) && readText(path) === null) report.error(unreadable);
+			if (unreadable(readText(path))) report.error(unreadableError);
 		},
 
 		plan: (m) => ({ action: read(m).action }),
@@ -101,15 +102,15 @@ export function onboardingSkipList(ctx) {
 		describe,
 
 		// Read afresh, so a line the operator added since the plan is kept
-		// and counts. The entry is recorded, and the list's directory created
-		// before the checkpoint, which records it, so an interrupted write
+		// and counts. The entry is recorded and the list's directory created
+		// before the checkpoint saves the manifest, so an interrupted write
 		// leaves nothing uninstall cannot find. Our entry, deleted since,
 		// comes back. Returns whether this checkout is listed: the plugin is
 		// registered only when it is.
 		install(m, report, checkpoint) {
 			const { action, record, text } = read(m);
-			if (text === null && lexists(path)) {
-				report.error(unreadable);
+			if (unreadable(text)) {
+				report.error(unreadableError);
 				return false;
 			}
 			report.say(describe({ action }));
