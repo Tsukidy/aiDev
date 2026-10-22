@@ -24,17 +24,22 @@ mkdirSync(state, { recursive: true });
 const fail = (process.env.STUB_FAIL ?? '').split(',');
 const interrupts = (process.env.STUB_INTERRUPT ?? '').split(',');
 
-// Linux only: the ancestors come from /proc.
+// Linux only: the ancestors come from /proc. The chain is walked before
+// anything is killed, so a stub run outside the installer kills nothing, and
+// install.mjs goes first: killed bottom-up, it would see the stub's exit and
+// start the next call before the signal reached it.
 function killInstaller() {
+	const chain = [];
 	for (let pid = process.ppid; pid > 1; ) {
+		chain.push(pid);
+		if (readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').some((a) => a.endsWith('/install.mjs'))) {
+			for (const p of chain.reverse()) process.kill(p, 'SIGKILL');
+			return;
+		}
 		const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-		const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
-		const installer = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').some((a) => a.endsWith('/install.mjs'));
-		process.kill(pid, 'SIGKILL');
-		if (installer) return;
-		pid = ppid;
+		pid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
 	}
-	throw new Error('install.mjs is not among the stub\'s ancestors');
+	throw new Error("install.mjs is not among the stub's ancestors");
 }
 
 const exit = (call, code) => {
