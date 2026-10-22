@@ -93,8 +93,9 @@ export function invalidFileEntries(listed, dir) {
 	});
 }
 
-// A listed plugin directory's id (paseo-plugin.json) and the names of the
-// files its copy holds (package.json "files"), or why it cannot be installed.
+// A listed plugin directory's id (paseo-plugin.json) and the files its copy
+// holds (package.json "files"), each { name, content }, or why it cannot be
+// installed.
 export function readPlugin(dir) {
 	const errors = [];
 	const json = (name) => {
@@ -110,7 +111,15 @@ export function readPlugin(dir) {
 	if (meta !== undefined && !plainName(meta?.id)) errors.push(`${join(dir, 'paseo-plugin.json')} "id" must be a plain name, one path segment: ${JSON.stringify(meta?.id)}`);
 	const bad = pkg === undefined ? [] : invalidFileEntries(pkg?.files, dir);
 	if (bad.length) errors.push(`${join(dir, 'package.json')} "files" must list plain names of files in ${dir}: ${bad.join(', ')}`);
-	return errors.length ? { errors } : { id: meta.id, files: pkg.files };
+	if (errors.length) return { errors };
+	const files = pkg.files.map((name) => {
+		try {
+			return { name, content: readFileSync(join(dir, name)) };
+		} catch {
+			errors.push(`${join(dir, name)} cannot be read`);
+		}
+	});
+	return errors.length ? { errors } : { id: meta.id, files };
 }
 
 export function pluginsStep(ctx) {
@@ -119,19 +128,22 @@ export function pluginsStep(ctx) {
 
 	return {
 		preconditions(m, report) {
+			let unread = 0;
 			plugins = PASEO_PLUGIN_DIRS.flatMap((dir) => {
 				const { id, files, errors } = readPlugin(dir);
 				if (errors) {
+					unread++;
 					for (const e of errors) report.error(e);
 					return [];
 				}
 				const copy = join(ctx.dataDir, 'paseo-plugins', id);
-				return [{ id, dir, copy, files: files.map((name) => ({ path: join(copy, name), content: readFileSync(join(dir, name)) })) }];
+				return [{ id, dir, copy, files: files.map((f) => ({ path: join(copy, f.name), content: f.content })) }];
 			});
 			for (const [id, same] of Map.groupBy(plugins, (p) => p.id)) {
 				if (same.length > 1) report.error(`plugin id ${id} is declared by more than one paseo-plugin.json: ${same.map((p) => p.dir).join(', ')}`);
 			}
-			for (const { id, path } of m ? items(m, 'plugin') : []) {
+			// A plugin that cannot be read has no id to match, and stops the install.
+			for (const { id, path } of m && !unread ? items(m, 'plugin') : []) {
 				if (!plugins.some((p) => p.id === id)) report.warn(`plugin ${id} (copy ${path}) is recorded but no longer listed in PASEO_PLUGIN_DIRS — install leaves it as is; uninstall removes it`);
 			}
 			if (findOnPath('paseo', ctx.env)) {

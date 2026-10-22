@@ -3,7 +3,7 @@
 // line that names it. The sandbox cases of test-install-plugin.sh drive the
 // same step end to end.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -81,7 +81,7 @@ test('plainName: one path segment, so an id names a directory inside the copies'
 	);
 });
 
-test('readPlugin: the id and file names, or each reason the directory cannot be installed', () => {
+test('readPlugin: the id and files, or each reason the directory cannot be installed', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'read-plugin-'));
 	const put = (name, text) => writeFileSync(join(dir, name), text);
 	const meta = join(dir, 'paseo-plugin.json');
@@ -97,7 +97,10 @@ test('readPlugin: the id and file names, or each reason the directory cannot be 
 			assert.deepEqual(readPlugin(dir), { errors: [`${meta} "id" must be a plain name, one path segment: ${shown}`] }, text);
 		}
 		put('paseo-plugin.json', '{"id": "fixture"}');
-		assert.deepEqual(readPlugin(dir), { id: 'fixture', files: ['index.server.ts'] });
+		assert.deepEqual(readPlugin(dir), { id: 'fixture', files: [{ name: 'index.server.ts', content: Buffer.from('') }] });
+		chmodSync(join(dir, 'index.server.ts'), 0o000);
+		assert.deepEqual(readPlugin(dir), { errors: [`${join(dir, 'index.server.ts')} cannot be read`] });
+		chmodSync(join(dir, 'index.server.ts'), 0o644);
 		put('package.json', '{}');
 		assert.deepEqual(readPlugin(dir), { errors: [`${pkg} "files" must list plain names of files in ${dir}: (no "files" array)`] });
 	} finally {

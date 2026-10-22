@@ -452,6 +452,13 @@ check "it warns that the plugin stays until uninstall" \
 	out_has "$sb" "warning: plugin $fixture_id (copy $(plugin_copy "$sb" "$fixture_id")) is recorded but no longer listed in PASEO_PLUGIN_DIRS — install leaves it as is; uninstall removes it"
 check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
 check "the unlisted plugin is still running" plugin_status_is "$sb" running "$fixture_id"
+list_plugins test-fixture-plugin
+chmod 000 "$fixture/index.server.ts"
+two_install "$sb"
+check "a re-run with a listed plugin file it cannot read exits nonzero" test $? -ne 0
+check "it names the file" out_has "$sb" "error: $fixture/index.server.ts cannot be read"
+check "it does not also call the recorded plugin no longer listed" bash -c '! grep -qF "no longer listed" "$1"' _ "$sb/out.txt"
+chmod 644 "$fixture/index.server.ts"
 two_uninstall "$sb"
 check "uninstall with the plugin unlisted exits 0" test $? -eq 0
 check "uninstall still removes the unlisted plugin's registration" bash -c '[ "$(cat "$1")" = "[]" ]' _ "$sb/state/paseo-plugins.json"
