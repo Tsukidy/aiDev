@@ -15,10 +15,10 @@ skip_list_of() { # skip_list_of <sb>
 	printf '%s\n' "$1/home/.config/aidev/beads-onboarding-skip"
 }
 
-# The list's entries, one per line, as the plugin reads them: comments and
-# blank lines dropped.
+# The list's entries, one per line, as the plugin reads them: comments (a #
+# at the start of a line or after whitespace onwards) and blank lines dropped.
 entries() { # entries <sb>
-	sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$(skip_list_of "$1")" | grep -v '^$'
+	sed -E -e 's/(^|[[:space:]])#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$(skip_list_of "$1")" | grep -v '^$'
 }
 
 recorded() { # recorded <sb>  — the manifest records our entry
@@ -90,6 +90,18 @@ check "install records no entry it did not add" not recorded "$sb"
 uninstall_in "$sb" --purge --yes
 check "uninstall leaves the operator's entry for this checkout" test "$(cat "$(skip_list_of "$sb")")" = "$list"
 
+# ...also by a path with a # in it, and a comment after it: only a # at the
+# start of a line or after whitespace starts a comment.
+sb=$(new_sandbox skip-already-hash)
+mkdir -p "$(dirname "$(skip_list_of "$sb")")"
+ln -sfn "$repo" "$tmp/links/ai#dev"
+printf '%s\t# the skill source\n' "$tmp/links/ai#dev" >"$(skip_list_of "$sb")"
+list=$(cat "$(skip_list_of "$sb")")
+install_in "$sb"
+check "install over a list naming this checkout by a path with a # in it exits 0" test $? -eq 0
+check "a # inside a path is part of it: no second entry is added" test "$(cat "$(skip_list_of "$sb")")" = "$list"
+check "and none is recorded" not recorded "$sb"
+
 # --- converging ------------------------------------------------------------------------------
 
 # Our entry, deleted by the operator, comes back on the next run (as our hook entry does).
@@ -101,6 +113,16 @@ check "a re-run after our entry was deleted exits 0" test $? -eq 0
 check "a re-run puts our deleted entry back, once" test "$(entries "$sb")" = "$repo"
 uninstall_in "$sb" --purge --yes
 check "uninstall then deletes the list the install created" test ! -e "$(skip_list_of "$sb")"
+
+# A list the #34 install created, under that install's header, is still ours to delete.
+sb=$(new_sandbox skip-34-header)
+before=$(snapshot "$sb/home")
+install_in "$sb"
+printf '%s\n' '# Paseo projects the firstmate-beads-onboarding plugin never initializes beads in:' \
+	'# one absolute or ~/ path per line, matched by real path; # starts a comment.' "$repo" >"$(skip_list_of "$sb")"
+uninstall_in "$sb" --purge --yes
+check "uninstall deletes a list it created under the #34 header" test ! -e "$(skip_list_of "$sb")"
+check "and restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
 # An install from before #34 (a version-2 manifest, no skip list) gains the entry.
 sb=$(new_sandbox skip-from-v2)

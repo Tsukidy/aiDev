@@ -138,8 +138,9 @@ excluded skill only warns. A name that is not a skill warns.
 
 `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip`, operator-owned:
 the project bases the onboarding plugin never initializes. One absolute or
-`~/` path per line, `#` starts a comment; the plugin reads it on every
-`workspace.created` event and compares real paths, so a symlinked path
+`~/` path per line; a `#` at the start of a line or after whitespace starts a
+comment, so a `#` inside a path is part of the path. The plugin reads it on
+every `workspace.created` event and compares real paths, so a symlinked path
 matches. A listed project is skipped with a log line, and becomes eligible
 again on its next workspace event once its line is gone. The full rules are
 in the plugin's README.

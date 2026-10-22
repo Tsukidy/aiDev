@@ -351,6 +351,20 @@ test("a ~/ entry is the daemon's HOME", async () => {
 	}
 });
 
+test("a # inside a path is part of the entry; one at a line's start or after whitespace starts a comment", async () => {
+	const base = freshRepo("proj#hash");
+	try {
+		for (const line of [base, `${base}\t# the skill source`, `${base} #`]) {
+			setSkipList(`${line}\n`);
+			resetCalls();
+			await onboard({ projects: [project("proj-hash", base)], workspace: event("proj-hash", base) });
+			assert.deepEqual(calls(), [], `${JSON.stringify(line)} skips ${base}`);
+		}
+	} finally {
+		setSkipList(null);
+	}
+});
+
 test("a project not on the skip list onboards as before", async () => {
 	const base = freshRepo("not-skipped");
 	setSkipList(`${join(sandbox, "some-other-project")}\n${base}-suffix\n# ${base}\n`);

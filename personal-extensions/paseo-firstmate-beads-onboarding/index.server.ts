@@ -23,11 +23,12 @@
 //   conventions discoverable in worktrees and clones. Init commits the scaffolding
 //   itself; this plugin performs no git operations and writes no files.
 // - Skip list: before any bd call, the operator-owned skip list is read afresh
-//   (skipListPath: one absolute or ~/ path per line, # comments). A base whose
-//   real path matches an entry's is logged and left alone, and not marked
-//   completed, so removing the entry makes it eligible on its next event. A
-//   missing list skips nothing; a list that cannot be read initializes nothing
-//   and leaves the project retryable (Tsukidy/aiDev #34).
+//   (skipListPath: one absolute or ~/ path per line; a # at a line's start or
+//   after whitespace starts a comment, so a # inside a path is part of it). A
+//   base whose real path matches an entry's is logged and left alone, and not
+//   marked completed, so removing the entry makes it eligible on its next
+//   event. A missing list skips nothing; a list that cannot be read
+//   initializes nothing and leaves the project retryable (Tsukidy/aiDev #34).
 // - Failure posture: absent bd, a failed initialized-check, or a failed init each
 //   log a warning and return without throwing. The standing orders are the
 //   behavioral safety net ("no database found" → report blocked, never
@@ -149,7 +150,7 @@ async function onSkipList(list: string, base: string, log: Pick<Console, "log" |
 	}
 	const entries = text
 		.split("\n")
-		.map((line) => line.replace(/#.*/, "").trim())
+		.map((line) => line.replace(/(^|\s)#.*/, "").trim())
 		.filter(Boolean);
 	if (!entries.length) return false;
 	const target = await realOrResolved(base);

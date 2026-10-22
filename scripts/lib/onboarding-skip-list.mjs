@@ -1,6 +1,7 @@
 // The beads onboarding plugin's skip list (#34): an operator-owned file
 // (ctx.skipListFile) of project bases the plugin never runs `bd init` in, one
-// absolute or ~/ path per line, `#` starting a comment, matched by real path.
+// absolute or ~/ path per line, matched by real path; a `#` at a line's start
+// or after whitespace starts a comment, so a `#` inside a path is part of it.
 // The plugin reads it on every workspace.created event; its parsing there
 // (index.server.ts, which may import only what the host supplies) is the twin
 // of entries() and sameDir() below.
@@ -18,14 +19,16 @@ import { REPO, lexists, readText, realResolve, writeShared } from './aidev-insta
 import { add, drop, first, items, replace, skipEntryItem } from './manifest.mjs';
 
 // What a skip list the install creates starts with.
-export const HEADER =
-	'# Paseo projects the firstmate-beads-onboarding plugin never initializes beads in:\n' +
-	'# one absolute or ~/ path per line, matched by real path; # starts a comment.\n';
+const TITLE = '# Paseo projects the firstmate-beads-onboarding plugin never initializes beads in:\n';
+export const HEADER = `${TITLE}# one absolute or ~/ path per line, matched by real path; a # at the start of a line or after whitespace starts a comment.\n`;
+// A list the #34 install created starts with that install's header, from
+// before a `#` inside a path was part of it; uninstall deletes it as ours too.
+const CREATED_HEADERS = [HEADER, `${TITLE}# one absolute or ~/ path per line, matched by real path; # starts a comment.\n`];
 
 export const entries = (text) =>
 	text
 		.split('\n')
-		.map((l) => l.replace(/#.*/, '').trim())
+		.map((l) => l.replace(/(^|\s)#.*/, '').trim())
 		.filter(Boolean);
 
 // Whether a list entry names dir: both sides by real path, ~ being home.
@@ -65,7 +68,7 @@ export function removeEntry(text, { entry, before = '', existedBefore }) {
 		lines.splice(i, 1);
 		out = lines.join('\n');
 	}
-	return !existedBefore && (out === HEADER || out.trim() === '') ? null : out;
+	return !existedBefore && (CREATED_HEADERS.includes(out) || out.trim() === '') ? null : out;
 }
 
 export function onboardingSkipList(ctx) {
