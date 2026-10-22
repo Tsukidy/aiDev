@@ -7,14 +7,14 @@ they call, and the offline tests for all of it.
 | File | Role |
 | --- | --- |
 | `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
-| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`), and the manifest's changes (`tests/manifest.test.mjs`). |
+| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`), the manifest's changes (`tests/manifest.test.mjs`), and the text in front of a marked block, read from its record (`tests/aidev-install.test.mjs`). |
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
 | `lib/onboarding-plugin.mjs` | The beads onboarding plugin step (#33): the copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
 | `lib/onboarding-skip-list.mjs` | That step's skip-list entry (#34): this checkout's root on the plugin's skip list, added before the plugin is registered, removed at uninstall. |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
-| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33), the third its skip-list cases (#34). Run directly, or via `tests/run.sh`. |
+| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh`, `tests/test-install-interrupt.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33), the third its skip-list cases (#34), the fourth the installs killed at an external call (#35). Run directly, or via `tests/run.sh`. |
 | `tests/lib/install-harness.sh`, `tests/lib/cli-stub.mjs` | Their shared harness (sourced): sandboxes, helpers, and the stub CLIs (`npx`, `paseo`, `bd`, `bun`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
 | `tests/test-standing-orders.sh` | That installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
@@ -325,6 +325,8 @@ bash scripts/tests/test-standing-orders.sh   # the orders installer alone
 bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alone
 bash scripts/tests/test-install-plugin.sh    # their onboarding plugin step alone
 bash scripts/tests/test-install-skip-list.sh # its skip-list entry alone
+bash scripts/tests/test-install-interrupt.sh # installs killed at an external call
 node --test scripts/tests/onboarding-plugin.test.mjs   # the plugin step's decision table
 node --test scripts/tests/manifest.test.mjs            # the manifest's changes
+node --test scripts/tests/aidev-install.test.mjs       # the text in front of a marked block, from its record
 ```
