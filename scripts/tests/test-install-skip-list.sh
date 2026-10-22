@@ -215,21 +215,13 @@ check "with no worktree warning" not out_has "$sb" "linked git worktree"
 
 # --- the list is read again when it is written -------------------------------------------------
 #
-# This npx appends STUB_SKIP_APPEND to the list while the skills install, after
-# the plan has read it: the operator editing the list during the run.
-
-make_stub_dir "$tmp/stubs/editing" paseo bd bun
-cat >"$tmp/stubs/editing/npx" <<EOF
-#!/usr/bin/env bash
-[ "\$3" = add ] && printf '%s\n' "\$STUB_SKIP_APPEND" >>"\$XDG_CONFIG_HOME/aidev/beads-onboarding-skip"
-exec node $(printf %q "$tests/lib/cli-stub.mjs") npx "\$@"
-EOF
-chmod +x "$tmp/stubs/editing/npx"
+# The npx stub's STUB_SKIP_APPEND edits the list while the skills install,
+# after the plan has read it.
 
 sb=$(new_sandbox skip-edited-mid-run)
 mkdir -p "$(dirname "$(skip_list_of "$sb")")"
 printf '/opt/scratch\n' >"$(skip_list_of "$sb")"
-run_in "$sb" editing STUB_SKIP_APPEND=/opt/added-mid-run -- "$installer"
+run_in "$sb" full STUB_SKIP_APPEND=/opt/added-mid-run -- "$installer"
 check "install over a list edited during the run exits 0" test $? -eq 0
 check "the line added during the run is kept, ours after it" \
 	test "$(entries "$sb")" = "$(printf '/opt/scratch\n/opt/added-mid-run\n%s' "$repo")"
@@ -239,7 +231,7 @@ check "uninstall then removes only ours" test "$(entries "$sb")" = "$(printf '/o
 sb=$(new_sandbox skip-listed-mid-run)
 mkdir -p "$(dirname "$(skip_list_of "$sb")")"
 printf '/opt/scratch\n' >"$(skip_list_of "$sb")"
-run_in "$sb" editing STUB_SKIP_APPEND="$repo" -- "$installer"
+run_in "$sb" full STUB_SKIP_APPEND="$repo" -- "$installer"
 check "install over a list that comes to name this checkout during the run exits 0" test $? -eq 0
 check "that entry is the operator's: none of ours is added" test "$(entries "$sb")" = "$(printf '/opt/scratch\n%s' "$repo")"
 check "and none is recorded" not recorded "$sb"

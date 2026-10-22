@@ -7,8 +7,11 @@
 // plus paseo-build (every plugin build fails) and paseo-interrupt (a plugin
 // install or reload kills its caller once the daemon has built the plugin and
 // saved its status). The build applies the plugin's own host-supplied rule.
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+// `skills add` plays the operator editing the beads onboarding skip list
+// mid-run, after the installer's plan has read it: STUB_SKIP_APPEND appends
+// that line to the list, then STUB_SKIP_MODE chmods it.
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { hostSupplied, imports } from '../../../personal-extensions/paseo-firstmate-beads-onboarding/tests/host-supplied.mjs';
 
 const [name, ...args] = process.argv.slice(2);
@@ -38,6 +41,10 @@ if (name === 'npx') {
 	const lock = existsSync(lockPath) ? JSON.parse(readFileSync(lockPath, 'utf8')) : { version: 3, skills: {} };
 	const names = listAfter('-s');
 	if (cmd === 'add') {
+		const config = isAbsolute(process.env.XDG_CONFIG_HOME ?? '') ? process.env.XDG_CONFIG_HOME : join(home, '.config');
+		const skipList = join(config, 'aidev', 'beads-onboarding-skip');
+		if (process.env.STUB_SKIP_APPEND) appendFileSync(skipList, `${process.env.STUB_SKIP_APPEND}\n`);
+		if (process.env.STUB_SKIP_MODE) chmodSync(skipList, process.env.STUB_SKIP_MODE);
 		const source = args[3];
 		for (const n of names) {
 			const dest = join(claude, 'skills', n);
