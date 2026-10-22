@@ -35,9 +35,12 @@ import {
 	items,
 	ownedFile,
 	ownedFileItem,
+	ownedFiles,
 	partsIn,
 	readManifest,
+	recordWrite,
 	serialize,
+	settleWrite,
 	sharedFile,
 	sharedFileItem,
 } from './manifest.mjs';
@@ -270,7 +273,17 @@ export function writeAtomic(p, content, { mode, through = false } = {}) {
 // Write a file we only add parts to: through symlinks, keeping its mode.
 export const writeShared = (p, content) => writeAtomic(p, content, { through: true });
 
-export const loadManifest = (ctx) => readManifest(ctx.manifestPath);
+// Read the manifest, settling what a killed run left in flight (#50): a
+// recorded write its file holds is what we last wrote, and one it does not
+// hold was never made; a backup never copied was never taken. In memory
+// only, so a dry run stays read-only.
+export function loadManifest(ctx) {
+	const m = readManifest(ctx.manifestPath);
+	if (!m) return m;
+	for (const rec of ownedFiles(m)) settleWrite(rec, fileSha(rec.path) === rec.next);
+	for (const b of items(m, 'backup', (b) => !b.link && !existsSync(b.path))) drop(m, b);
+	return m;
+}
 
 // Written only when it changed, so an install that changes nothing leaves the
 // manifest byte-identical.
@@ -296,44 +309,48 @@ export function worktreeCommonDir() {
 	return dir === common ? null : common;
 }
 
-// Copy a pre-existing file aside the first time the install modifies it; a
-// later run must not back up our own changes, and must never overwrite a
+// One in-process write (#50). The caller records what the write creates;
+// with `backup`, the file's pre-install copy is recorded here too. Then the
+// manifest is saved, the copy made, and the file written, by `write` or,
+// without one, by the caller's next call (the orders scripts write captain.md).
+export function recordedWrite(ctx, m, checkpoint, path, { backup = false, keepLink = false, write } = {}) {
+	const copy = backup ? recordBackup(ctx, m, path, keepLink) : null;
+	checkpoint();
+	testKillPoint(ctx, `record ${tilde(ctx, path)}`);
+	if (copy) {
+		mkdirSync(dirname(copy.path), { recursive: true });
+		copyFileSync(path, copy.path);
+		testKillPoint(ctx, `copied ${tilde(ctx, path)}`);
+	}
+	if (!write) return;
+	write();
+	testKillPoint(ctx, `written ${tilde(ctx, path)}`);
+}
+
+// Record a pre-existing file's copy the first time the install modifies it;
+// a later run must not back up our own changes, and must never overwrite a
 // backup an earlier uninstall kept. With `keepLink` (a file we replace
 // whole), a symlink is recorded as the link itself, so uninstall puts the
-// link back instead of a copy. The backup is recorded, and checkpointed,
-// before the copy is made (#50); a run killed in between leaves the copy to
-// the next run, which makes it while the file still holds what was recorded.
-export function backupOnce(ctx, m, checkpoint, path, { keepLink = false } = {}) {
-	if (!lexists(path)) return;
-	const b = backupOf(m, path);
-	if (b) {
-		if (!b.link && !existsSync(b.path) && fileSha(path) === b.sha256) copyBackup(path, b.path);
-		return;
-	}
+// link back instead of a copy. Returns the backup still to be copied, or null.
+function recordBackup(ctx, m, path, keepLink) {
+	if (!lexists(path) || backupOf(m, path)) return null;
 	if (keepLink && lstatSync(path).isSymbolicLink()) {
 		add(m, { ...backupItem(path, path, null), link: readlinkSync(path) });
-		return checkpoint();
+		return null;
 	}
-	if (!existsSync(path)) return;
+	if (!existsSync(path)) return null;
 	let n = items(m, 'backup').length + 1;
 	let dest;
 	do dest = join(ctx.backupsDir, `${String(n++).padStart(3, '0')}-${basename(path)}`);
 	while (existsSync(dest));
-	add(m, backupItem(path, dest, fileSha(path)));
-	checkpoint();
-	copyBackup(path, dest);
+	return add(m, backupItem(path, dest, fileSha(path)));
 }
 
-function copyBackup(path, dest) {
-	mkdirSync(dirname(dest), { recursive: true });
-	copyFileSync(path, dest);
+// Delete a backup's copy and its record.
+export function discardBackup(m, b) {
+	if (!b.link) rmSync(b.path, { force: true });
+	drop(m, b);
 }
-
-// What we last wrote to a file whose whole content is ours, by its record:
-// a write is recorded before it is made (#50), with `next`, the content it
-// leaves, which counts once the file holds it; until then `sha256` stands,
-// null for a file never written.
-const writtenSha = (record, cur) => (record.next !== undefined && cur === record.next ? record.next : record.sha256);
 
 // What placing a file whose whole content is ours will do, read from the
 // manifest and the disk without changing either: `action` is `current` (it
@@ -345,42 +362,26 @@ const writtenSha = (record, cur) => (record.next !== undefined && cur === record
 export function ownedFileAction(m, { path, content }) {
 	const record = ownedFile(m, path);
 	const cur = fileSha(path);
-	const ours = record && writtenSha(record, cur);
 	let action;
-	if (!ours) action = cur === null ? 'write' : 'replace';
-	else if (cur !== null && cur !== ours) action = 'kept';
+	if (!record || record.sha256 === null) action = cur === null ? 'write' : 'replace';
+	else if (cur !== null && cur !== record.sha256) action = 'kept';
 	else action = cur === sha256(content) ? 'current' : 'write';
 	return { action, record, bytes: action === 'kept' ? readFileSync(path) : content };
 }
 
 // Place a file whose whole content is ours (an agent, a hook file, the sheet,
 // a license copy, the plugin's copy), as ownedFileAction says (or said, when
-// the caller planned with it). The write is recorded, and checkpointed,
-// before it is made (#50).
+// the caller planned with it), through recordedWrite.
 export function placeOwnedFile(ctx, m, report, checkpoint, { kind = 'file', name, path, content, mode }, planned = ownedFileAction(m, { path, content })) {
 	const { action, record, bytes } = planned;
 	const want = sha256(content);
 	if (action === 'kept' && sha256(bytes) !== want) report.warn(`${path} was modified since install — left as is`);
-	if (action === 'kept' || action === 'current') return settleOwnedFile(m, record);
-	if (action === 'replace') {
-		backupOnce(ctx, m, checkpoint, path, { keepLink: true });
-		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
-	}
+	if (action === 'kept' || action === 'current') return;
 	const rec = record ?? add(m, ownedFileItem({ kind, name, path, sha256: null, existedBefore: action === 'replace' }));
-	rec.next = want;
-	checkpoint();
-	testKillPoint(ctx, `write ${tilde(ctx, path)}`);
-	writeAtomic(path, content, { mode });
-	settleOwnedFile(m, rec);
-}
-
-// Settle a record's last write: once made, it is what we last wrote; never
-// made on a file never ours, the record goes, with its backup.
-export function settleOwnedFile(m, record) {
-	const ours = writtenSha(record, fileSha(record.path));
-	if (ours === null) return reverseOwnedFile(m, record);
-	record.sha256 = ours;
-	delete record.next;
+	recordWrite(rec, want);
+	if (action === 'replace') report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
+	recordedWrite(ctx, m, checkpoint, path, { backup: action === 'replace', keepLink: true, write: () => writeAtomic(path, content, { mode }) });
+	settleWrite(rec, true);
 }
 
 // Take back a file placed by placeOwnedFile: delete it while it still holds
@@ -388,29 +389,28 @@ export function settleOwnedFile(m, record) {
 // A file edited since install is kept. Returns a "kept" note, or null.
 export function reverseOwnedFile(m, item) {
 	const cur = fileSha(item.path);
-	const ours = writtenSha(item, cur);
 	const b = backupOf(m, item.path);
 	drop(m, item);
-	if (ours === null) {
-		// Recorded, never written: the file is as it was; the backup goes.
-		if (b) {
-			if (!b.link) rmSync(b.path, { force: true });
-			drop(m, b);
+	if (item.sha256 === null) {
+		// Recorded, never written (#50): the file is the operator's. Its backup
+		// goes while the file still holds it; changed since, it is kept.
+		if (!b) return null;
+		if (b.link || cur === b.sha256) {
+			discardBackup(m, b);
+			return null;
 		}
-		return null;
+		drop(m, b);
+		return `${b.path} (pre-install copy of ${item.path}, which changed since a killed install recorded it)`;
 	}
-	if (cur !== null && cur !== ours) {
+	if (cur !== null && cur !== item.sha256) {
 		if (b) drop(m, b); // left on disk; the note says where
 		const original = b?.link ? `; it replaced a link to ${b.link}` : b ? `; the pre-install original is at ${b.path}` : '';
 		return `${item.path} (modified since install${original})`;
 	}
 	if (cur !== null) rmSync(item.path, { force: true });
 	if (b?.link) symlinkSync(b.link, item.path);
-	else if (b && existsSync(b.path)) {
-		writeAtomic(item.path, readFileSync(b.path), { mode: statSync(b.path).mode & 0o7777 });
-		rmSync(b.path, { force: true });
-	}
-	if (b) drop(m, b);
+	else if (b && existsSync(b.path)) writeAtomic(item.path, readFileSync(b.path), { mode: statSync(b.path).mode & 0o7777 });
+	if (b) discardBackup(m, b);
 	return null;
 }
 
@@ -421,16 +421,12 @@ export function noteSharedFile(m, path, existedBefore, format) {
 	rec.sha256 = fileSha(path);
 }
 
-// Write a file we add parts to, its new part already recorded: backed up,
-// recorded and checkpointed before the write (#50), so a run killed before
-// it leaves records uninstall and a re-run go by.
-export function writeSharedFile(ctx, m, checkpoint, path, content, { existedBefore, format }) {
-	backupOnce(ctx, m, checkpoint, path);
-	noteSharedFile(m, path, existedBefore, format);
-	checkpoint();
-	testKillPoint(ctx, `write ${tilde(ctx, path)}`);
-	writeShared(path, content);
-	noteSharedFile(m, path, existedBefore, format);
+// Write a file we add parts to, through recordedWrite, once the caller has
+// recorded the new part: the file's record and backup are recorded with it.
+export function writeSharedFile(ctx, m, checkpoint, path, content, format) {
+	noteSharedFile(m, path, existsSync(path), format);
+	recordedWrite(ctx, m, checkpoint, path, { backup: true, write: () => writeShared(path, content) });
+	noteSharedFile(m, path, true, format);
 }
 
 // How each shared-file format is read, stripped of one of our parts,
@@ -460,10 +456,8 @@ const CODECS = {
 export function reverseSharedFile(m, path, stripHook) {
 	const parts = partsIn(m, path);
 	const rec = sharedFile(m, path);
-	const recorded = backupOf(m, path);
-	for (const i of [...parts, rec, recorded]) if (i) drop(m, i);
-	// A backup recorded but never copied (#50) is no backup.
-	const b = recorded && existsSync(recorded.path) ? recorded : null;
+	const b = backupOf(m, path);
+	for (const i of [...parts, rec, b]) if (i) drop(m, i);
 	const text = readText(path);
 	if (text === null) return b ? `${b.path} (backup of ${path}, which was deleted after install)` : null;
 	const codec = CODECS[rec?.format ?? (parts.some((p) => p.kind === 'hook-entry') ? 'json' : 'text')];
@@ -522,16 +516,17 @@ export function blockRange(text, id) {
 }
 
 // Insert a marked block at the end of `text` (null = no file yet), or replace
-// the body of the one already there. Returns the new text and the separator
-// put in front of an appended block (uninstall removes it with the block).
+// the body of the one already there. Returns the new text, whether the block
+// was appended, and the separator put in front of an appended block
+// (uninstall removes it with the block).
 export function upsertBlock(text, id, body) {
 	const [s, e] = markers(id);
 	const block = `${s}\n${body}${e}\n`;
 	const range = text === null ? null : blockRange(text, id);
-	if (range) return { text: text.slice(0, range[0]) + block + text.slice(range[1]), before: '' };
-	if (!text) return { text: block, before: '' };
+	if (range) return { text: text.slice(0, range[0]) + block + text.slice(range[1]), before: '', appended: false };
+	if (!text) return { text: block, before: '', appended: true };
 	const before = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
-	return { text: text + before + block, before };
+	return { text: text + before + block, before, appended: true };
 }
 
 // The text the install put in front of a marked block, from its manifest

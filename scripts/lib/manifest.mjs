@@ -29,11 +29,11 @@
 //   skills-lock   the skills CLI's lock (existedBefore)
 //
 // `existedBefore` on a file says whether it was there before the install.
-// An agent or a file whose whole content is ours is recorded before each
-// write (#50): `next` is the sha256 the write leaves, and `sha256` what we
-// wrote before it, null for a file not written yet; placeOwnedFile in
-// aidev-install.mjs settles both once the write is made. A backup is recorded
-// before its copy is made, with the sha256 of the file it copies.
+// Each in-process write is recorded before it is made (#50). An agent or a
+// file whose whole content is ours then carries `next`, the sha256 the write
+// leaves, beside `sha256`, what we wrote before it (null for a file not
+// written yet); recordWrite and settleWrite below change the two. A backup
+// is recorded before its copy is made, with the sha256 of the file it copies.
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -116,6 +116,16 @@ export const replace = (m, old, item) => {
 	if (i < 0) throw new Error(`cannot replace a ${old.kind} item that is not in the manifest (${old.path})`);
 	m.items[i] = item;
 	return item;
+};
+// The write about to be made to a file whose whole content is ours (#50)...
+export const recordWrite = (item, sha256) => {
+	item.next = sha256;
+};
+// ...and, once it is made or known never to have been, its record settled.
+export const settleWrite = (item, made) => {
+	if (item.next === undefined) return;
+	if (made) item.sha256 = item.next;
+	delete item.next;
 };
 
 // --- item constructors ----------------------------------------------------------------

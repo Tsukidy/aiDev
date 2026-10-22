@@ -148,17 +148,19 @@ leaves that header; uninstall after a re-run does not.
 `tests/test-install-interrupt.sh` kills the install at each such call.
 
 An install killed between its own file writes converges the same way (#50).
-Each write is recorded, and the manifest saved, before it is made: a file
-whose whole content is ours (an agent, a hook file, the sheet, a license
-copy, the plugin's copy) with `next`, the hash the write leaves; our part of
-a shared file (the hook entry, the `CLAUDE.md` block) with the shared file's
-record; and a backup before its copy is made. A record whose file never
-received its write is not read as the operator's edit: a re-run makes the
-write, and uninstall leaves the file as it was and drops the backup. A
-backup whose copy was never made is made by the next run, while the file
-still holds what was recorded. The tests stop the install at kill points
-that only they set (`AIDEV_TEST_KILL`): after each group of writes, and
-between a write's record and the write.
+Each write is recorded, and the manifest saved, before it is made, along
+with the backup of the file it changes; the backup is copied after that
+save, and the file written last. A file whose whole content is ours carries
+`next`, the hash the write leaves; our part of a shared file (the hook entry,
+the `CLAUDE.md` block) is recorded with the shared file's record. Install and
+uninstall settle what a killed run left when they load the manifest: a
+recorded write the file holds is ours, one it does not hold was never made,
+and a backup never copied was never taken. A file whose write was never made
+is not read as the operator's edit: a re-run makes the write, and uninstall
+leaves the file as it was and drops its backup (kept, with a note, when the
+file changed since). The tests stop the install at kill points that only
+they set (`AIDEV_TEST_KILL`): once a write is recorded, once its backup is
+copied, and once it is written.
 
 What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook

@@ -20,12 +20,11 @@
 // recorded before the script runs, and settled after it, the block with the
 // text the script put in front of it, so uninstall removes exactly that.
 
-import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	ONBOARDING_PLUGIN_DIR,
 	REPO,
-	backupOnce,
+	discardBackup,
 	blockBefore,
 	blockRange,
 	countLines,
@@ -33,6 +32,7 @@ import {
 	markers,
 	noteSharedFile,
 	readText,
+	recordedWrite,
 	resolveMateHome,
 	run,
 } from './aidev-install.mjs';
@@ -69,18 +69,15 @@ export function ordersStep(ctx) {
 	// a killed run is the operator's.
 	function recordCaptain(m, checkpoint) {
 		const existed = sharedFile(m, captain)?.existedBefore ?? readText(captain) !== null;
-		if (existed) backupOnce(ctx, m, checkpoint, captain);
 		noteSharedFile(m, captain, existed);
+		recordedWrite(ctx, m, checkpoint, captain, { backup: existed });
 		return existed;
 	}
 	function settleCaptain(m, existed) {
 		if (partsIn(m, captain).length || sharedFile(m, captain).changedByInstall) return noteSharedFile(m, captain, existed);
 		drop(m, sharedFile(m, captain));
 		const b = backupOf(m, captain);
-		if (b) {
-			rmSync(b.path, { force: true });
-			drop(m, b);
-		}
+		if (b) discardBackup(m, b);
 	}
 
 	return {

@@ -39,21 +39,28 @@ last_call_is() { # last_call_is <sb> <name> <args prefix>
 reference_records() { # reference_records <plain|rich>
 	local ref=$tmp/sb/ref-$1
 	if [ ! -d "$ref" ]; then
-		new_sandbox "ref-$1" "${1#plain}" >/dev/null
+		new_sandbox "ref-$1" "$(rich_arg "$1")" >/dev/null
 		install_in "$ref"
 	fi
 	records "$ref"
 }
 
-# interrupted <label> <VAR=value> <plain|rich> [<stub name> <args prefix>]
-# With a stub call named, the kill must come at it. Leaves sb as the re-run's
-# sandbox, with the re-run's output in $sb/rerun.txt.
-interrupted() {
-	local label="$1 ($3)" kill=$2 kind=$3 rich=${3#plain} before status
-	local slug=${label//[^A-Za-z0-9.-]/-}
-	shift 3
+rich_arg() { # rich_arg <plain|rich>  — new_sandbox's second argument
+	case $1 in
+	rich) printf rich ;;
+	*) ;;
+	esac
+}
 
-	sb=$(new_sandbox "uninstall-$slug" "$rich")
+# interrupted <label> <VAR=value> <plain|rich> <rerun-check> [<stub name> <args prefix>]
+# <rerun-check> <label> <sb> runs once the re-run is done, its output in
+# <sb>/out.txt (`:` for none). With a stub call named, the kill must come at it.
+interrupted() {
+	local label="$1 ($3)" kill=$2 kind=$3 rerun_check=$4 sb before status
+	local slug=${label//[^A-Za-z0-9.-]/-}
+	shift 4
+
+	sb=$(new_sandbox "uninstall-$slug" "$(rich_arg "$kind")")
 	before=$(snapshot "$sb/home")
 	interrupt "$sb" "$kill"
 	check "$label: the install was killed" test $? -ne 0
@@ -64,62 +71,99 @@ interrupted() {
 	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
 	check "$label: uninstall right after restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-	sb=$(new_sandbox "rerun-$slug" "$rich")
+	sb=$(new_sandbox "rerun-$slug" "$(rich_arg "$kind")")
 	before=$(snapshot "$sb/home")
 	interrupt "$sb" "$kill"
 	install_in "$sb"
 	status=$?
-	cp "$sb/out.txt" "$sb/rerun.txt"
 	check "$label: the re-run exits 0" test "$status" -eq 0
 	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
-	check "$label: the re-run finds nothing of ours installed from elsewhere" bash -c '! grep -qF "from elsewhere" "$1"' _ "$sb/rerun.txt"
+	check "$label: the re-run finds nothing of ours installed from elsewhere" bash -c '! grep -qF "from elsewhere" "$1"' _ "$sb/out.txt"
 	check "$label: the re-run records what an uninterrupted install does" test "$(records "$sb")" = "$(reference_records "$kind")"
+	"$rerun_check" "$label" "$sb"
 	uninstall_in "$sb" --purge --yes
 	check "$label: uninstall after the re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 }
 
 # The skills CLI has copied half the skills, and written its lock for those.
-interrupted skills-add-partway STUB_INTERRUPT=skills-add-partway plain npx "--yes $skills_pin add "
+interrupted skills-add-partway STUB_INTERRUPT=skills-add-partway plain : npx "--yes $skills_pin add "
 # The skills CLI has copied every skill and written its lock.
-interrupted skills-add STUB_INTERRUPT=skills-add plain npx "--yes $skills_pin add "
-interrupted skills-add STUB_INTERRUPT=skills-add rich npx "--yes $skills_pin add "
+interrupted skills-add STUB_INTERRUPT=skills-add plain : npx "--yes $skills_pin add "
+interrupted skills-add STUB_INTERRUPT=skills-add rich : npx "--yes $skills_pin add "
 # The standing-orders block is appended; the beads installer has just begun.
-interrupted bd-ready STUB_INTERRUPT=bd-ready plain bd "ready"
-interrupted bd-ready STUB_INTERRUPT=bd-ready rich bd "ready"
+interrupted bd-ready STUB_INTERRUPT=bd-ready plain : bd "ready"
+interrupted bd-ready STUB_INTERRUPT=bd-ready rich : bd "ready"
 # bd init has created the mate's home database; its orders block is not appended yet.
-interrupted bd-init STUB_INTERRUPT=bd-init plain bd "init"
+interrupted bd-init STUB_INTERRUPT=bd-init plain : bd "init"
 
 # --- killed between the installer's own writes (#50) -----------------------------
+#
+# At the installer's kill points (AIDEV_TEST_KILL), each named for one file:
+# `record` once what its write may create is recorded and saved, `copied` once
+# its backup is copied, `written` once it is written.
 
 # The re-run takes none of the installer's own files, blocks or entries for the
 # operator's.
-reran_as_ours() { # reran_as_ours <label>
-	check "$1: the re-run backs up none of its own files" bash -c '! grep -qF "already existed" "$1"' _ "$sb/rerun.txt"
-	check "$1: the re-run finds none of its own blocks or entries unrecorded" bash -c '! grep -qF "not added by this install" "$1"' _ "$sb/rerun.txt"
+reran_as_ours() { # reran_as_ours <label> <sb>
+	check "$1: the re-run backs up none of its own files" bash -c '! grep -qF "already existed" "$1"' _ "$2/out.txt"
+	check "$1: the re-run finds none of its own blocks or entries unrecorded" bash -c '! grep -qF "not added by this install" "$1"' _ "$2/out.txt"
 }
 
-# After each group of writes: the agents; the routing hook's files and its
-# settings.json entry; the model sheet; the CLAUDE.md block; the license copies.
-for point in agents hook sheet claude-md licenses; do
+# After each group of writes, at its last write: the agents; the routing hook's
+# files and its settings.json entry; the model sheet; the CLAUDE.md block; the
+# license copies.
+last_agent=$(node -e 'import(process.argv[1]).then((l) => console.log(l.repoAgents().at(-1).name))' "$repo/scripts/lib/aidev-install.mjs")
+for file in ".claude/agents/$last_agent.md" .claude/settings.json .claude/pstack-models.md .claude/CLAUDE.md .local/share/aidev/licenses/LICENSE-repository; do
 	for kind in plain rich; do
-		interrupted "after $point" "AIDEV_TEST_KILL=$point" "$kind"
-		reran_as_ours "after $point ($kind)"
+		interrupted "written ~/$file" "AIDEV_TEST_KILL=written ~/$file" "$kind" reran_as_ours
 	done
 done
 
-# A write recorded, and the record saved, but not made: a shared file's new
-# part, and a file whose whole content is ours, new or (rich) replacing the
-# operator's.
+# A write recorded and saved, but not made: a shared file's new part, and a
+# file whose whole content is ours, new or (rich) replacing the operator's.
 for file in settings.json CLAUDE.md agents/comment-sicko.md; do
-	for kind in plain rich; do
-		interrupted "before writing $file" "AIDEV_TEST_KILL=write ~/.claude/$file" "$kind"
-		if [ "$file$kind" != agents/comment-sicko.mdrich ]; then reran_as_ours "before writing $file ($kind)"; fi
-	done
+	interrupted "record ~/.claude/$file" "AIDEV_TEST_KILL=record ~/.claude/$file" plain reran_as_ours
 done
-# The operator's agent, backed up, not yet replaced: the re-run replaces it
-# once, keeping the backup, which uninstall put back (checked above).
-label="before writing agents/comment-sicko.md (rich)"
-check "$label: the re-run replaces the operator's agent" test "$(grep -F "already existed" "$sb/rerun.txt")" = "install: $sb/home/.claude/agents/comment-sicko.md already existed — backed up and replaced; uninstall restores it"
+for file in settings.json CLAUDE.md; do
+	interrupted "record ~/.claude/$file" "AIDEV_TEST_KILL=record ~/.claude/$file" rich reran_as_ours
+done
+
+# The operator's agent, recorded for a backup not yet copied, or copied and not
+# yet replaced: the re-run replaces it once and keeps the backup.
+replaced_once() { # replaced_once <label> <sb>
+	local agent=$2/home/.claude/agents/comment-sicko.md
+	check "$1: the re-run replaces the operator's agent once" test "$(grep -F "already existed" "$2/out.txt")" = "install: $agent already existed — backed up and replaced; uninstall restores it"
+	check "$1: the re-run keeps its backup" manifest_true "$2" 'm.items.some((i) => i.kind === "backup" && i.of === "'"$agent"'" && require("fs").readFileSync(i.path, "utf8").includes("the operator wrote this one"))'
+}
+for point in record copied; do
+	interrupted "$point ~/.claude/agents/comment-sicko.md" "AIDEV_TEST_KILL=$point ~/.claude/agents/comment-sicko.md" rich replaced_once
+done
+
+# captain.md, which the orders scripts write: its record and backup are saved
+# before the first script runs.
+for point in record copied; do
+	interrupted "$point ~/$mate_rel/data/captain.md" "AIDEV_TEST_KILL=$point ~/$mate_rel/data/captain.md" rich :
+done
+
+# A backup recorded but never copied, and the operator's agent edited before
+# the re-run: the re-run backs up the edited agent, which uninstall restores.
+edited_before_copy() {
+	local label="the operator's agent edited after a kill before its backup" sb before agent edited
+	sb=$(new_sandbox edited-before-copy rich)
+	agent=$sb/home/.claude/agents/comment-sicko.md
+	before=$(snapshot "$sb/home" | grep -vF agents/comment-sicko.md)
+	interrupt "$sb" "AIDEV_TEST_KILL=record ~/.claude/agents/comment-sicko.md"
+	check "$label: the install was killed" test $? -ne 0
+	printf 'OPERATOR: edited.\n' >>"$agent"
+	edited=$(cat "$agent")
+	install_in "$sb"
+	check "$label: the re-run exits 0" test $? -eq 0
+	uninstall_in "$sb" --purge --yes
+	check "$label: uninstall exits 0" test $? -eq 0
+	check "$label: uninstall restores the edited agent" test "$(cat "$agent")" = "$edited"
+	check "$label: everything else is restored" test "$(snapshot "$sb/home" | grep -vF agents/comment-sicko.md)" = "$before"
+}
+edited_before_copy
 
 # --- what captain.md gains between a kill at bd-ready and the re-run is not ours ---
 

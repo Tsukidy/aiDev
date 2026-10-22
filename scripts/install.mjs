@@ -54,7 +54,6 @@ import {
 	resolveContext,
 	saveManifest,
 	skillDependencies,
-	testKillPoint,
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
 import { dirItem, drop, ensure, items, newManifest } from './lib/manifest.mjs';
@@ -158,8 +157,9 @@ if (flags['dry-run']) {
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
 // Save the manifest, naming every directory the install may create, before
-// each external call, so an interrupted run leaves nothing uninstall cannot
-// find. finish() drops the directories that were never created.
+// each external call and each of the installer's own writes, so an
+// interrupted run leaves nothing uninstall cannot find. finish() drops the
+// directories that were never created.
 const checkpoint = () => {
 	for (const d of watched) ensure(m, dirItem(d), (i) => i.path === d);
 	saveManifest(ctx, m);
@@ -180,7 +180,6 @@ if (report.errors.length) finish(1);
 // Attribution travels with the install: NOTICE, the provenance manifest and
 // every license file of the tree, plus the repository's own license.
 for (const f of licenseFiles) placeOwnedFile(ctx, m, report, checkpoint, { path: f.dest, content: readFileSync(f.src) });
-testKillPoint(ctx, 'licenses');
 
 // Step 8a: the orders installers.
 orders.install(m, report, checkpoint);
