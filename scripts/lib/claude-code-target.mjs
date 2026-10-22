@@ -21,7 +21,7 @@ import {
 	reverseSharedFile,
 	skillsCli,
 	upsertBlock,
-	writeSharedFile,
+	placeSharedFile,
 } from './aidev-install.mjs';
 import {
 	add,
@@ -121,7 +121,7 @@ export function claudeCodeTarget(ctx) {
 		json.hooks.SessionStart ??= [];
 		json.hooks.SessionStart.push({ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: shQuote(hookScript) }] });
 		if (!ours) add(m, hookEntryItem(NAME, settings, 'SessionStart', hookScript));
-		writeSharedFile(ctx, m, checkpoint, settings, jsonLike(json, text), 'json');
+		placeSharedFile(ctx, m, checkpoint, settings, jsonLike(json, text), 'json');
 	}
 
 	// The same reversal uninstall uses: settings.json holds only our hook entry.
@@ -242,13 +242,15 @@ export function claudeCodeTarget(ctx) {
 				return;
 			}
 			const up = upsertBlock(before, SHEET_BLOCK, `@${sheet}\n`);
-			if (up.text !== before) {
-				// Appended (again, if a run killed before writing it recorded it):
-				// the record takes the separator put in front of it this time.
-				if (!ours) add(m, markedBlockItem(claudeMd, SHEET_BLOCK, up.before));
-				else if (up.appended) replace(m, ours, markedBlockItem(claudeMd, SHEET_BLOCK, up.before));
-				writeSharedFile(ctx, m, checkpoint, claudeMd, up.text, 'text');
+			if (up.text === before) return;
+			// Appended (again, if a run killed before writing it recorded it):
+			// the record takes the separator put in front of it this time.
+			if (up.appended) {
+				const item = markedBlockItem(claudeMd, SHEET_BLOCK, up.before);
+				if (ours) replace(m, ours, item);
+				else add(m, item);
 			}
+			placeSharedFile(ctx, m, checkpoint, claudeMd, up.text, 'text');
 		},
 	};
 }

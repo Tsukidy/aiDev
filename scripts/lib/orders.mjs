@@ -24,15 +24,15 @@ import { join } from 'node:path';
 import {
 	ONBOARDING_PLUGIN_DIR,
 	REPO,
-	discardBackup,
 	blockBefore,
 	blockRange,
 	countLines,
+	discardBackup,
 	lexists,
 	markers,
 	noteSharedFile,
+	prepareWrite,
 	readText,
-	recordedWrite,
 	resolveMateHome,
 	run,
 } from './aidev-install.mjs';
@@ -68,10 +68,9 @@ export function ordersStep(ctx) {
 	// then the backup has nothing of the install's to undo, and a change since
 	// a killed run is the operator's.
 	function recordCaptain(m, checkpoint) {
-		const existed = sharedFile(m, captain)?.existedBefore ?? readText(captain) !== null;
-		noteSharedFile(m, captain, existed);
-		recordedWrite(ctx, m, checkpoint, captain, { backup: existed });
-		return existed;
+		const { existedBefore } = noteSharedFile(m, captain, readText(captain) !== null);
+		prepareWrite(ctx, m, checkpoint, captain, { backup: existedBefore });
+		return existedBefore;
 	}
 	function settleCaptain(m, existed) {
 		if (partsIn(m, captain).length || sharedFile(m, captain).changedByInstall) return noteSharedFile(m, captain, existed);

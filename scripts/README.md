@@ -150,17 +150,19 @@ leaves that header; uninstall after a re-run does not.
 An install killed between its own file writes converges the same way (#50).
 Each write is recorded, and the manifest saved, before it is made, along
 with the backup of the file it changes; the backup is copied after that
-save, and the file written last. A file whose whole content is ours carries
-`next`, the hash the write leaves; our part of a shared file (the hook entry,
-the `CLAUDE.md` block) is recorded with the shared file's record. Install and
-uninstall settle what a killed run left when they load the manifest: a
-recorded write the file holds is ours, one it does not hold was never made,
-and a backup never copied was never taken. A file whose write was never made
-is not read as the operator's edit: a re-run makes the write, and uninstall
-leaves the file as it was and drops its backup (kept, with a note, when the
-file changed since). The tests stop the install at kill points that only
-they set (`AIDEV_TEST_KILL`): once a write is recorded, once its backup is
-copied, and once it is written.
+save (to a temporary name, then renamed), and the file written last. A file
+whose whole content is ours carries `next`, the hash the write leaves, and a
+new record starts at what the file held; our part of a shared file (the
+hook entry, the `CLAUDE.md` block) is recorded with the shared file's
+record; a backup is `pending` until its copy is made. Install and uninstall
+settle what a killed run left when they load the manifest. A pending backup
+never copied was never taken, and the write recorded with it was never made.
+A recorded write the file holds is ours; one it does not hold was never
+made, so the record reads the file as it was (the operator's, which its
+backup restores, or nothing). An operator's edit made after a kill is kept.
+The tests stop the install at kill points that only they set
+(`AIDEV_TEST_KILL`): once a write is recorded, once its backup is copied,
+and once it is written.
 
 What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
@@ -267,7 +269,7 @@ block, or, until the orders script that appends it has run, `at`, the length
 and sha256 of the text the file held before it),
 `plugin` (with `id` and `buildSha256`, the build the daemon last made of the
 copy), `skip-entry` (with `entry` and the text put in front of it),
-`backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
+`backup` (with `of`, and `pending` until its copy is made), `dir`, `beads-db`, `skills-lock`. A re-run that
 changes nothing leaves it byte-identical. Uninstall with no manifest refuses
 and touches nothing. `lib/manifest.mjs` defines every kind and its fields,
 and its one upgrade, from version 1: a manifest from before #33 whose
@@ -279,9 +281,9 @@ is; the version went up so that an older checkout's uninstall refuses it (the
 rollback note above) rather than leave our skip-list entry behind. Version 4
 (#35) only adds `at` on `marked-block`, so a version 3 is read as is; an
 older checkout's uninstall would strip such a block without the text it was
-appended after, so it refuses a 4. Version 5 (#50) only adds `next`, and a
-null `sha256`, on `agent` and `file`, so a version 4 is read as is; an older
-checkout's uninstall would keep such a file as modified since install, so it
+appended after, so it refuses a 4. Version 5 (#50) only adds `next` on `agent`
+and `file`, and `pending` on `backup`, so a version 4 is read as is; an older
+checkout's uninstall would misread a record that has not settled, so it
 refuses a 5.
 
 ### The orders block upgrade story

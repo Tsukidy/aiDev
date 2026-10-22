@@ -10,8 +10,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { blockBefore, loadManifest, ownedFileAction, recordedWrite, reverseOwnedFile, sha256 } from '../lib/aidev-install.mjs';
-import { backupItem, markedBlockIntent, markedBlockItem, newManifest, ownedFileItem, recordWrite, serialize } from '../lib/manifest.mjs';
+import { blockBefore, checkpointedWrite, loadManifest, ownedFileAction, reverseOwnedFile, sha256 } from '../lib/aidev-install.mjs';
+import { backupItem, backupPending, markedBlockIntent, markedBlockItem, newManifest, ownedFileItem, recordWrite, serialize } from '../lib/manifest.mjs';
 
 const path = '/h/captain.md';
 const block = '<!-- x:start -->\nbody\n<!-- x:end -->\n';
@@ -44,99 +44,108 @@ test('an intent returns nothing when the text held has changed', () => {
 
 const ours = 'ours\n';
 const theirs = 'the operator\'s\n';
+const older = 'ours, older\n';
 const dirs = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
-// A home whose agent file holds `text` (null: absent), and a manifest with
-// that file's record as a run killed in its write left it: `sha256` what we
-// wrote before (null: nothing), `next` the content of the write. With
-// `backup`, the operator's file's backup is recorded too, and copied when
-// `copied`.
-function killedInWrite({ text, sha = null, backup = false, copied = true }) {
-	const home = mkdtempSync(join(tmpdir(), 'aidev-'));
-	dirs.push(home);
-	const ctx = { home, manifestPath: join(home, 'manifest.json'), backupsDir: join(home, 'backups'), env: {} };
-	const path = join(home, 'agent.md');
+function home() {
+	const dir = mkdtempSync(join(tmpdir(), 'aidev-'));
+	dirs.push(dir);
+	return { home: dir, manifestPath: join(dir, 'manifest.json'), backupsDir: join(dir, 'backups'), env: {} };
+}
+
+// A manifest as a run killed inside placing agent.md left it, loaded. The
+// file holds `text` (null: absent); the record starts at `sha` and records the
+// write of ours. With `backup`, the operator's file's backup is recorded too,
+// pending, and copied when `copied`; `done` marks it settled.
+function loadedAfterKill({ text, sha = text === null ? null : sha256(text), backup = false, copied = true, done = false }) {
+	const ctx = home();
+	const path = join(ctx.home, 'agent.md');
+	const copy = join(ctx.backupsDir, '001-agent.md');
 	if (text !== null) writeFileSync(path, text);
 	const m = newManifest('x');
 	const record = ownedFileItem({ kind: 'agent', name: 'agent', path, sha256: sha, existedBefore: backup });
 	recordWrite(record, sha256(ours));
 	m.items.push(record);
 	if (backup) {
-		const copy = join(ctx.backupsDir, '001-agent.md');
 		if (copied) {
 			mkdirSync(ctx.backupsDir);
 			writeFileSync(copy, theirs);
 		}
-		m.items.push(backupItem(path, copy, sha256(theirs)));
+		m.items.push((done ? backupItem : backupPending)(path, copy, sha256(theirs)));
 	}
 	writeFileSync(ctx.manifestPath, serialize(m));
-	return { ctx, path, copy: join(ctx.backupsDir, '001-agent.md') };
+	return { m: loadManifest(ctx), path, copy };
 }
 
-test('loading settles a write the file holds as what we last wrote', () => {
-	const { ctx, path } = killedInWrite({ text: ours });
-	const m = loadManifest(ctx);
+const kinds = (m) => m.items.map((i) => i.kind);
+
+test('a recorded write the file holds is what we last wrote', () => {
+	const { m, path } = loadedAfterKill({ text: ours, sha: null });
 	assert.deepEqual(m.items, [ownedFileItem({ kind: 'agent', name: 'agent', path, sha256: sha256(ours), existedBefore: false })]);
 	assert.equal(ownedFileAction(m, { path, content: ours }).action, 'current');
 });
 
-test('loading settles a write the file does not hold as never made', () => {
-	const older = 'ours, older\n';
-	const { ctx, path } = killedInWrite({ text: older, sha: sha256(older) });
-	const m = loadManifest(ctx);
-	assert.equal(m.items[0].sha256, sha256(older));
-	assert.equal('next' in m.items[0], false);
+test('an update never made leaves what we wrote before, to write again', () => {
+	const { m, path } = loadedAfterKill({ text: older });
+	assert.deepEqual([m.items[0].sha256, 'next' in m.items[0]], [sha256(older), false]);
 	assert.equal(ownedFileAction(m, { path, content: ours }).action, 'write');
 });
 
-test("a write never made over the operator's file replaces it, and on a new file writes it", () => {
-	const over = killedInWrite({ text: theirs, backup: true });
-	assert.equal(ownedFileAction(loadManifest(over.ctx), { path: over.path, content: ours }).action, 'replace');
-	const fresh = killedInWrite({ text: null });
-	assert.equal(ownedFileAction(loadManifest(fresh.ctx), { path: fresh.path, content: ours }).action, 'write');
+test('a new file never written is not ours', () => {
+	assert.deepEqual(loadedAfterKill({ text: null }).m.items, []);
 });
 
-test('loading drops a backup never copied', () => {
-	const { ctx } = killedInWrite({ text: theirs, backup: true, copied: false });
-	assert.deepEqual(
-		loadManifest(ctx).items.map((i) => i.kind),
-		['agent'],
-	);
+test("a write over the operator's file, never made before its backup was copied, was not made", () => {
+	const { m, path } = loadedAfterKill({ text: theirs, backup: true, copied: false });
+	assert.deepEqual(m.items, []);
+	assert.equal(ownedFileAction(m, { path, content: ours }).action, 'replace');
 });
 
-test("taking back a write never made leaves the operator's file and discards its backup", () => {
-	const { ctx, path, copy } = killedInWrite({ text: theirs, backup: true });
-	const m = loadManifest(ctx);
+test('...even when the operator\'s file holds what ours would', () => {
+	const { m } = loadedAfterKill({ text: ours, sha: sha256(ours), backup: true, copied: false });
+	assert.deepEqual(m.items, []);
+});
+
+test("a write over the operator's file, never made once its backup was copied, starts from their file", () => {
+	const { m, path } = loadedAfterKill({ text: theirs, backup: true });
+	assert.deepEqual(kinds(m), ['agent', 'backup']);
+	assert.equal('pending' in m.items[1], false);
+	assert.equal(ownedFileAction(m, { path, content: ours }).action, 'write');
 	assert.equal(reverseOwnedFile(m, m.items[0]), null);
 	assert.equal(readFileSync(path, 'utf8'), theirs);
-	assert.equal(existsSync(copy), false);
 	assert.deepEqual(m.items, []);
 });
 
-test('taking back a write never made keeps the backup of a file changed since', () => {
-	const { ctx, path, copy } = killedInWrite({ text: theirs, backup: true });
+test("...and an edit of their file since is kept, with its backup", () => {
+	const { m, path, copy } = loadedAfterKill({ text: theirs, backup: true });
 	writeFileSync(path, 'edited\n');
-	const m = loadManifest(ctx);
-	assert.match(reverseOwnedFile(m, m.items[0]), /001-agent\.md/);
+	assert.equal(ownedFileAction(m, { path, content: ours }).action, 'kept');
+	assert.match(reverseOwnedFile(m, m.items[0]), /modified since install; the pre-install original is at .*001-agent\.md/);
+	assert.equal(readFileSync(path, 'utf8'), 'edited\n');
 	assert.equal(readFileSync(copy, 'utf8'), theirs);
-	assert.deepEqual(m.items, []);
 });
 
-test('a recorded write saves its records, then copies the backup, then writes', () => {
-	const { ctx, path, copy } = killedInWrite({ text: theirs });
+test('a settled backup whose copy is gone keeps its record', () => {
+	const { m } = loadedAfterKill({ text: ours, sha: sha256(ours), backup: true, copied: false, done: true });
+	assert.deepEqual(kinds(m), ['agent', 'backup']);
+});
+
+test('a checkpointed write saves its records, then copies the backup, then writes', () => {
+	const ctx = home();
+	const path = join(ctx.home, 'settings.json');
+	const copy = join(ctx.backupsDir, '001-settings.json');
+	writeFileSync(path, theirs);
 	const m = newManifest('x');
 	const seen = [];
-	const checkpoint = () => seen.push(['saved', m.items.map((i) => i.kind), existsSync(copy)]);
-	recordedWrite(ctx, m, checkpoint, path, {
-		backup: true,
-		write: () => {
-			seen.push(['write', readFileSync(copy, 'utf8')]);
-			writeFileSync(path, ours);
-		},
+	const checkpoint = () => seen.push(['saved', structuredClone(m.items), existsSync(copy)]);
+	checkpointedWrite(ctx, m, checkpoint, path, { backup: true }, () => {
+		seen.push(['write', readFileSync(copy, 'utf8')]);
+		writeFileSync(path, ours);
 	});
 	assert.deepEqual(seen, [
-		['saved', ['backup'], false],
+		['saved', [backupPending(path, copy, sha256(theirs))], false],
 		['write', theirs],
 	]);
+	assert.deepEqual(m.items, [backupItem(path, copy, sha256(theirs))]);
 });

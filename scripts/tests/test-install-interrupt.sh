@@ -39,17 +39,10 @@ last_call_is() { # last_call_is <sb> <name> <args prefix>
 reference_records() { # reference_records <plain|rich>
 	local ref=$tmp/sb/ref-$1
 	if [ ! -d "$ref" ]; then
-		new_sandbox "ref-$1" "$(rich_arg "$1")" >/dev/null
+		new_sandbox "ref-$1" "$1" >/dev/null
 		install_in "$ref"
 	fi
 	records "$ref"
-}
-
-rich_arg() { # rich_arg <plain|rich>  — new_sandbox's second argument
-	case $1 in
-	rich) printf rich ;;
-	*) ;;
-	esac
 }
 
 # interrupted <label> <VAR=value> <plain|rich> <rerun-check> [<stub name> <args prefix>]
@@ -60,7 +53,7 @@ interrupted() {
 	local slug=${label//[^A-Za-z0-9.-]/-}
 	shift 4
 
-	sb=$(new_sandbox "uninstall-$slug" "$(rich_arg "$kind")")
+	sb=$(new_sandbox "uninstall-$slug" "$kind")
 	before=$(snapshot "$sb/home")
 	interrupt "$sb" "$kill"
 	check "$label: the install was killed" test $? -ne 0
@@ -71,7 +64,7 @@ interrupted() {
 	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
 	check "$label: uninstall right after restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-	sb=$(new_sandbox "rerun-$slug" "$(rich_arg "$kind")")
+	sb=$(new_sandbox "rerun-$slug" "$kind")
 	before=$(snapshot "$sb/home")
 	interrupt "$sb" "$kill"
 	install_in "$sb"
@@ -129,14 +122,14 @@ for file in settings.json CLAUDE.md; do
 done
 
 # The operator's agent, recorded for a backup not yet copied, or copied and not
-# yet replaced: the re-run replaces it once and keeps the backup.
-replaced_once() { # replaced_once <label> <sb>
+# yet replaced: the re-run replaces it and keeps the backup.
+replaced() { # replaced <label> <sb>
 	local agent=$2/home/.claude/agents/comment-sicko.md
-	check "$1: the re-run replaces the operator's agent once" test "$(grep -F "already existed" "$2/out.txt")" = "install: $agent already existed — backed up and replaced; uninstall restores it"
+	check "$1: the re-run replaces the operator's agent" cmp -s "$agent" "$skills_src/no-comments/agents/comment-sicko.md"
 	check "$1: the re-run keeps its backup" manifest_true "$2" 'm.items.some((i) => i.kind === "backup" && i.of === "'"$agent"'" && require("fs").readFileSync(i.path, "utf8").includes("the operator wrote this one"))'
 }
 for point in record copied; do
-	interrupted "$point ~/.claude/agents/comment-sicko.md" "AIDEV_TEST_KILL=$point ~/.claude/agents/comment-sicko.md" rich replaced_once
+	interrupted "$point ~/.claude/agents/comment-sicko.md" "AIDEV_TEST_KILL=$point ~/.claude/agents/comment-sicko.md" rich replaced
 done
 
 # captain.md, which the orders scripts write: its record and backup are saved
@@ -145,25 +138,80 @@ for point in record copied; do
 	interrupted "$point ~/$mate_rel/data/captain.md" "AIDEV_TEST_KILL=$point ~/$mate_rel/data/captain.md" rich :
 done
 
-# A backup recorded but never copied, and the operator's agent edited before
-# the re-run: the re-run backs up the edited agent, which uninstall restores.
-edited_before_copy() {
-	local label="the operator's agent edited after a kill before its backup" sb before agent edited
-	sb=$(new_sandbox edited-before-copy rich)
+# The operator edits their agent after the kill. Before its backup is copied,
+# the re-run backs up the edited agent and replaces it, and uninstall restores
+# it; once the backup is copied, the edit is the operator's change to a file
+# the install recorded, so the re-run and uninstall keep it.
+edited_after_kill() { # edited_after_kill <record|copied>
+	local label="the operator's agent edited after a kill at $1" sb before agent edited
+	sb=$(new_sandbox "edited-after-$1" rich)
 	agent=$sb/home/.claude/agents/comment-sicko.md
 	before=$(snapshot "$sb/home" | grep -vF agents/comment-sicko.md)
-	interrupt "$sb" "AIDEV_TEST_KILL=record ~/.claude/agents/comment-sicko.md"
+	interrupt "$sb" "AIDEV_TEST_KILL=$1 ~/.claude/agents/comment-sicko.md"
 	check "$label: the install was killed" test $? -ne 0
 	printf 'OPERATOR: edited.\n' >>"$agent"
 	edited=$(cat "$agent")
 	install_in "$sb"
 	check "$label: the re-run exits 0" test $? -eq 0
+	if [ "$1" = copied ]; then check "$label: the re-run keeps the edit" test "$(cat "$agent")" = "$edited"; fi
 	uninstall_in "$sb" --purge --yes
 	check "$label: uninstall exits 0" test $? -eq 0
-	check "$label: uninstall restores the edited agent" test "$(cat "$agent")" = "$edited"
-	check "$label: everything else is restored" test "$(snapshot "$sb/home" | grep -vF agents/comment-sicko.md)" = "$before"
+	check "$label: the edited agent is there after uninstall" test "$(cat "$agent")" = "$edited"
+	if [ "$1" = record ]; then check "$label: everything else is restored" test "$(snapshot "$sb/home" | grep -vF agents/comment-sicko.md)" = "$before"; fi
 }
-edited_before_copy
+edited_after_kill record
+edited_after_kill copied
+
+# An operator file identical to ours is still the operator's: a kill before
+# its backup is copied must not leave it recorded as ours, with no backup.
+identical_operator_agent() {
+	local label="an operator agent identical to ours, killed at record" sb before status
+	for run in uninstall rerun; do
+		sb=$(new_sandbox "identical-$run" rich)
+		cp "$skills_src/no-comments/agents/comment-sicko.md" "$sb/home/.claude/agents/comment-sicko.md"
+		before=$(snapshot "$sb/home")
+		interrupt "$sb" "AIDEV_TEST_KILL=record ~/.claude/agents/comment-sicko.md"
+		check "$label ($run): the install was killed" test $? -ne 0
+		if [ "$run" = rerun ]; then
+			install_in "$sb"
+			check "$label ($run): the re-run exits 0" test $? -eq 0
+		fi
+		uninstall_in "$sb" --purge --yes
+		status=$?
+		check "$label ($run): uninstall exits 0" test "$status" -eq 0
+		check "$label ($run): uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+	done
+}
+identical_operator_agent
+
+# A settings.json the operator keeps on one line, killed before its backup is
+# copied: uninstall has nothing of ours to strip, so it leaves the bytes alone.
+one_line_settings() {
+	local label="a one-line settings.json, killed at record" sb before
+	sb=$(new_sandbox one-line-settings rich)
+	node -e 'const f = process.argv[1]; require("fs").writeFileSync(f, JSON.stringify(JSON.parse(require("fs").readFileSync(f, "utf8"))))' "$sb/home/.claude/settings.json"
+	before=$(snapshot "$sb/home")
+	interrupt "$sb" "AIDEV_TEST_KILL=record ~/.claude/settings.json"
+	check "$label: the install was killed" test $? -ne 0
+	uninstall_in "$sb" --purge --yes
+	check "$label: uninstall exits 0" test $? -eq 0
+	check "$label: uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+}
+one_line_settings
+
+# The operator deletes the backups after an install: the next run must not
+# take a fresh "pre-install" copy of captain.md, which holds our blocks now.
+backups_deleted() {
+	local label="backups deleted after an install" sb
+	sb=$(new_sandbox backups-deleted rich)
+	install_in "$sb"
+	rm -rf "$sb/home/.local/state/aidev/backups"
+	install_in "$sb"
+	check "$label: the re-run exits 0" test $? -eq 0
+	check "$label: the re-run takes no new backup" test ! -e "$sb/home/.local/state/aidev/backups"
+	check "$label: the re-run keeps the backup records" manifest_true "$sb" 'm.items.filter((i) => i.kind === "backup").length === 4'
+}
+backups_deleted
 
 # --- what captain.md gains between a kill at bd-ready and the re-run is not ours ---
 
@@ -223,10 +271,8 @@ unsettle_standing_orders() { # unsettle_standing_orders <sb>
 }
 
 unsettled_block() { # unsettled_block [rich]
-	local kind=${1:-plain} sb ref before status
+	local kind=${1:-plain} sb before status
 	local label="an appended, unsettled block ($kind)"
-	ref=$(new_sandbox "ref-unsettled-$kind" "${1:-}")
-	install_in "$ref"
 
 	sb=$(new_sandbox "uninstall-unsettled-$kind" "${1:-}")
 	before=$(snapshot "$sb/home")
@@ -247,7 +293,7 @@ unsettled_block() { # unsettled_block [rich]
 	status=$?
 	check "$label: the re-run exits 0" test "$status" -eq 0
 	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
-	check "$label: the re-run records what an uninterrupted install does" test "$(records "$sb")" = "$(records "$ref")"
+	check "$label: the re-run records what an uninterrupted install does" test "$(records "$sb")" = "$(reference_records "$kind")"
 	uninstall_in "$sb" --purge --yes
 	check "$label: uninstall after the re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 }
