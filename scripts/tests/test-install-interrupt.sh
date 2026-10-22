@@ -229,6 +229,7 @@ foreign_blocks_edited() {
 	sb=$(new_sandbox foreign-edited)
 	cp "$(captain_of "$ref")" "$(captain_of "$sb")"
 	interrupt "$sb" bd-ready
+	check "$label: the install was killed" test $? -ne 0
 	printf 'OPERATOR: never deploy on Fridays.\n' >>"$(captain_of "$sb")"
 	install_in "$sb"
 	status=$?
@@ -238,58 +239,102 @@ foreign_blocks_edited() {
 }
 foreign_blocks_edited
 
-# --- a kill inside the standing-orders script, on a captain.md it creates ----------
+# ...but once a script has upgraded a block that is not ours, the backup holds
+# the text before the upgrade, and every later run keeps it, killed or not.
+captain_backed_up() { # captain_backed_up <sb>
+	manifest_true "$1" 'm.items.some((i) => i.kind === "backup" && i.of.endsWith("/captain.md") && require("fs").existsSync(i.path))'
+}
+foreign_block_upgraded() {
+	local label="an older standing-orders block, not ours" ref sb
+	ref=$(new_sandbox ref-foreign-older)
+	install_in "$ref"
+	for run in clean killed; do
+		sb=$(new_sandbox "foreign-older-$run")
+		sed 's/^7\. \*\*Retro after landings\.\*\*/7. **Retro after each landing.**/' "$(captain_of "$ref")" >"$(captain_of "$sb")"
+		check "$label ($run): the block is older" grep -q 'Retro after each landing' "$(captain_of "$sb")"
+		if [ "$run" = clean ]; then
+			install_in "$sb"
+			check "$label ($run): the first run upgrades it" out_has "$sb" "upgraded the standing orders block"
+		else
+			interrupt "$sb" bd-ready
+			check "$label ($run): the install was killed once it had upgraded it" test $? -ne 0
+		fi
+		check "$label ($run): the run keeps the backup" captain_backed_up "$sb"
+		install_in "$sb"
+		check "$label ($run): the next run exits 0" test $? -eq 0
+		check "$label ($run): the next run keeps the backup" captain_backed_up "$sb"
+	done
+}
+foreign_block_upgraded
+
+# --- the standing-orders script stopped on a captain.md it creates ----------------
 #
-# From a git copy of this checkout whose standing-orders script kills the
-# install (and itself) either right after writing the header to the
-# captain.md it creates, or before writing anything. The re-run runs the
-# script unchanged.
+# From a git copy of this checkout whose standing-orders script runs a command
+# either right after writing the header to the captain.md it creates, or before
+# writing anything. The re-run runs the script unchanged.
 
 kill_copy=$tmp/kill-copy
-git_copy_with_worktree "$kill_copy" || printf 'FAIL the checkout copies for the kill cases\n'
+check "the checkout copies for the standing-orders cases" git_copy_with_worktree "$kill_copy"
 kill_script=$kill_copy/main/scripts/install-standing-orders.sh
 cp "$kill_script" "$tmp/standing-orders.orig"
 
-# killed_in_standing_orders <case> <after-header|before-header> <captain.md text written after the kill, or "">
-# Prints nothing; leaves the sandbox at <sb>, re-run and uninstalled.
-killed_in_standing_orders() {
-	local name=$1 when=$2 text=$3 sb
-	sb=$(new_sandbox "$name")
+break_standing_orders() { # break_standing_orders <after-header|before-header> <command>
 	cp "$tmp/standing-orders.orig" "$kill_script"
-	if [ "$when" = after-header ]; then
-		sed -i "s|^\tprintf 'created %s\\\\n' \"\$target\"|&\n\tkill -9 \$PPID \$\$|" "$kill_script"
+	if [ "$1" = after-header ]; then
+		sed -i "s|^\tprintf 'created %s\\\\n' \"\$target\"|&\n\t$2|" "$kill_script"
 	else
-		sed -i 's|^target="\$home/data/captain.md"|kill -9 $PPID $$\n&|' "$kill_script"
+		sed -i "s|^target=\"\\\$home/data/captain.md\"|$2\n&|" "$kill_script"
 	fi
-	snapshot "$sb/home" >"$sb/before.txt"
-	(run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs") 2>/dev/null
-	printf '%s' "$?" >"$sb/killed.txt"
-	cp "$tmp/standing-orders.orig" "$kill_script"
-	[ -n "$text" ] && printf '%s' "$text" >>"$(captain_of "$sb")"
-	run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs"
-	printf '%s' "$?" >"$sb/rerun.txt"
-	run_in "$sb" full -- "$kill_copy/main/scripts/uninstall.mjs" --purge --yes
-	printf '%s' "$?" >"$sb/uninstall.txt"
-	printf '%s\n' "$sb"
+	grep -qxF "	$2" "$kill_script" || grep -qxF "$2" "$kill_script"
 }
 
-sb=$(killed_in_standing_orders kill-header after-header "")
-label="a kill after the standing-orders header"
-check "$label: the install was killed, the header written" test "$(cat "$sb/killed.txt")" -ne 0
-check "$label: the re-run and uninstall exit 0" test "$(cat "$sb/rerun.txt")$(cat "$sb/uninstall.txt")" = 00
-check "$label: uninstall takes the header with the block, restoring the snapshot" test "$(snapshot "$sb/home")" = "$(cat "$sb/before.txt")"
+# killed_in_standing_orders <name> <after-header|before-header> <captain.md the kill leaves, or <absent>> [text added after the kill]
+# A first install killed there, then the text added, a re-run and uninstall,
+# each step checked; sets sb and before for the case's own checks.
+killed_in_standing_orders() {
+	local name=$1 where=$2 left=$3 text=${4:-} label="$1: killed $2" status
+	sb=$(new_sandbox "$name")
+	before=$(snapshot "$sb/home")
+	check "$label: the script is broken there" break_standing_orders "$where" 'kill -9 $PPID $$'
+	(run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs") 2>/dev/null # the shell's "Killed" notice
+	check "$label: the install was killed" test $? -ne 0
+	check "$label: the kill leaves captain.md as expected" test "$(cat "$(captain_of "$sb")" 2>/dev/null || printf '<absent>')" = "$left"
+	cp "$tmp/standing-orders.orig" "$kill_script"
+	if [ -n "$text" ]; then printf '%s' "$text" >>"$(captain_of "$sb")"; fi
+	run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs"
+	status=$?
+	check "$label: the re-run exits 0" test "$status" -eq 0
+	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+	run_in "$sb" full -- "$kill_copy/main/scripts/uninstall.mjs" --purge --yes
+	status=$?
+	check "$label: uninstall exits 0" test "$status" -eq 0
+	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+}
 
-sb=$(killed_in_standing_orders kill-header-edited after-header $'OPERATOR: never deploy on Fridays.\n')
-label="an operator line after a kill after the standing-orders header"
-check "$label: the re-run and uninstall exit 0" test "$(cat "$sb/rerun.txt")$(cat "$sb/uninstall.txt")" = 00
-check "$label: uninstall keeps the header and the line" test "$(cat "$(captain_of "$sb")")" = "$(printf '# Standing orders\n\nOPERATOR: never deploy on Fridays.')"
+killed_in_standing_orders kill-header after-header '# Standing orders'
+check "kill-header: uninstall takes the header with the block, restoring the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
+killed_in_standing_orders kill-header-edited after-header '# Standing orders' $'OPERATOR: never deploy on Fridays.\n'
+check "kill-header-edited: uninstall keeps the header and the operator's line" \
+	test "$(cat "$(captain_of "$sb")")" = "$(printf '# Standing orders\n\nOPERATOR: never deploy on Fridays.')"
 
 # firstmate seeds captain.md from its template whenever the mate launches.
 seeded=$'# Captain\'s standing orders\n\nOPERATOR: never deploy on Fridays.\n'
-sb=$(killed_in_standing_orders kill-before-header before-header "$seeded")
-label="a captain.md seeded after a kill before the standing-orders header"
-check "$label: the install was killed, no captain.md written" test "$(cat "$sb/killed.txt")" -ne 0
-check "$label: the re-run and uninstall exit 0" test "$(cat "$sb/rerun.txt")$(cat "$sb/uninstall.txt")" = 00
-check "$label: uninstall leaves the seeded file as it was" test "$(cat "$(captain_of "$sb")")" = "$(printf '%s' "$seeded")"
+killed_in_standing_orders kill-before-header before-header '<absent>' "$seeded"
+check "kill-before-header: uninstall leaves the captain.md seeded since as it was" test "$(cat "$(captain_of "$sb")")" = "$(printf '%s' "$seeded")"
+
+# A script that fails after the header, no kill: the re-run takes the header
+# with its block.
+sb=$(new_sandbox fail-header)
+before=$(snapshot "$sb/home")
+check "fail-header: the script is broken there" break_standing_orders after-header 'exit 1'
+run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs"
+check "fail-header: the install fails" test $? -ne 0
+check "fail-header: it leaves the header" test "$(cat "$(captain_of "$sb")")" = '# Standing orders'
+cp "$tmp/standing-orders.orig" "$kill_script"
+run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs"
+check "fail-header: the re-run exits 0" test $? -eq 0
+run_in "$sb" full -- "$kill_copy/main/scripts/uninstall.mjs" --purge --yes
+check "fail-header: uninstall after the re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
 summary

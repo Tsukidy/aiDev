@@ -1,9 +1,10 @@
 // The orders step of install (8a): the two orders installers, each appending
 // its own marked block to the first mate's data/captain.md, the beads one
 // also creating the mate's home memory database. A subset of the onboarding
-// plugin step's contract (onboarding-plugin.mjs): runtime-neutral, outside the
-// target registry, no plan, and nothing to reverse of its own, since uninstall strips
-// the recorded blocks and removes the recorded beads-db paths itself:
+// plugin step's contract (onboarding-plugin.mjs): runtime-neutral, outside
+// the target registry, no plan, and nothing to reverse of its own, since
+// uninstall strips the recorded blocks and removes the recorded beads-db
+// paths itself:
 //
 //   preconditions(report)  the mate home resolvable; captain.md's blocks
 //                          intact, and no marker name outside its marker
@@ -58,22 +59,22 @@ const ORDERS = [
 export function ordersStep(ctx) {
 	let mateHome = null;
 	let captain = null;
-	let captainText = null;
 	const ourBlock = (m, id) => first(m, 'marked-block', (i) => i.path === captain && i.id === id);
 
 	// captain.md's shared record and backup, written before the first script
 	// so a killed run leaves them, and taken back after when nothing of ours
-	// is recorded in the file and this run's scripts left it as they found
-	// it: uninstall would have nothing to strip, and a change since a killed
-	// run (the operator's) is not one the backup should undo.
+	// is recorded in the file and no script of any run has changed it (an
+	// upgrade of a block that is not ours marks the record changedByInstall):
+	// then the backup has nothing of the install's to undo, and a change since
+	// a killed run is the operator's.
 	function recordCaptain(m) {
-		const existed = sharedFile(m, captain)?.existedBefore ?? captainText !== null;
+		const existed = sharedFile(m, captain)?.existedBefore ?? readText(captain) !== null;
 		if (existed) backupOnce(ctx, m, captain);
 		noteSharedFile(m, captain, existed);
 		return existed;
 	}
-	function settleCaptain(m, existed, found) {
-		if (partsIn(m, captain).length || readText(captain) !== found) return noteSharedFile(m, captain, existed);
+	function settleCaptain(m, existed) {
+		if (partsIn(m, captain).length || sharedFile(m, captain).changedByInstall) return noteSharedFile(m, captain, existed);
 		drop(m, sharedFile(m, captain));
 		const b = backupOf(m, captain);
 		if (b) {
@@ -87,7 +88,7 @@ export function ordersStep(ctx) {
 			mateHome = resolveMateHome(ctx);
 			if (!mateHome) return report.error(`first mate home not found under ${ctx.paseoHome} — launch the first mate once so its home exists (or set PASEO_HOME)`);
 			captain = join(mateHome, 'data', 'captain.md');
-			captainText = readText(captain);
+			const captainText = readText(captain);
 			if (captainText === null) return;
 			for (const o of ORDERS) {
 				try {
@@ -110,24 +111,25 @@ export function ordersStep(ctx) {
 
 		install(m, report, checkpoint) {
 			const existed = recordCaptain(m);
-			const found = readText(captain);
 			for (const o of ORDERS) {
 				const pre = readText(captain) ?? '';
 				const ours = ourBlock(m, o.block);
 				if (!blockRange(pre, o.block)) {
-					// An intent a killed run left is anchored again at what the file
-					// holds now: what came in since (the operator's line, an upgrade of
-					// the block before) is not the script's to be removed with its
-					// block. One anchored at an empty file the install created stays
-					// while the file holds no more than the header, the script's own.
-					const keepAnchor = ours?.at?.length === 0 && !existed && (pre === '' || pre === HEADER);
-					if (!ours) add(m, markedBlockIntent(captain, o.block, pre));
-					else if (ours.at && !keepAnchor) replace(m, ours, markedBlockIntent(captain, o.block, pre));
+					// Anchored at what the file holds now, an intent a killed run left
+					// too: what came in since (the operator's line, an upgrade of the
+					// block before) is not the script's to be removed with its block.
+					// A file the install created that holds only the header is
+					// anchored at its start: the header is the script's, written by a
+					// run that was killed or failed before the block.
+					const anchor = !existed && pre === HEADER ? '' : pre;
+					if (!ours) add(m, markedBlockIntent(captain, o.block, anchor));
+					else if (ours.at) replace(m, ours, markedBlockIntent(captain, o.block, anchor));
 				}
 				for (const p of o.beadsDb(mateHome)) if (!lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
 				checkpoint();
 				const r = run(ctx, 'bash', [o.script]);
 				const post = readText(captain) ?? '';
+				if (post !== pre) sharedFile(m, captain).changedByInstall = true;
 				const item = ourBlock(m, o.block);
 				if (item?.at) {
 					if (blockRange(post, o.block)) replace(m, item, markedBlockItem(captain, o.block, blockBefore(post, item)));
@@ -139,7 +141,7 @@ export function ordersStep(ctx) {
 					break;
 				}
 			}
-			settleCaptain(m, existed, found);
+			settleCaptain(m, existed);
 		},
 	};
 }

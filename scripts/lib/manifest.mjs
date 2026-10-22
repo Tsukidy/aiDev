@@ -6,7 +6,8 @@
 //   skill         a skill the skills CLI installed for one runtime target (name, agent)
 //   agent         an agent definition file whose whole content is ours (name, sha256)
 //   file          a file whose whole content is ours (sha256), or, with
-//                 `shared: true`, a file we only add parts to (format: text | json)
+//                 `shared: true`, a file we only add parts to (format: text | json;
+//                 changedByInstall: an orders script changed it, #35)
 //   hook-entry    our entry in a shared settings file (target, event, marker)
 //   marked-block  our marked block in a shared text file (id, before: the text
 //                 the install put in front of the block), or, until the orders

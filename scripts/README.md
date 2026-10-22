@@ -135,11 +135,11 @@ settled with the text the script put in front of it. A re-run settles an
 intent a killed run left the same way, anchored again at what the file holds
 when its script runs, so a line the operator added since, or an upgrade of
 the block before, is not taken for the script's and removed with the block.
-The one exception is an intent at an empty `captain.md` the install created:
-while the file holds no more than the header the scripts write, the anchor
-stays, so that header goes with the block. A re-run also drops `captain.md`'s
-record and backup, which a killed run leaves, when nothing of ours is in the
-file and the scripts left it unchanged.
+The one exception is a `captain.md` the install created that holds only the
+header the scripts write: the intent is anchored at the file's start, so the
+header goes with the block. A re-run also drops `captain.md`'s record and
+backup, which a killed run leaves, when nothing of ours is in the file and no
+orders script has changed it (the record says so once one has).
 So a re-run knows the skills a killed run copied as ours, and uninstall after
 a kill at any call restores the pre-install state. `tests/test-install-interrupt.sh`
 kills the install at each such call.
