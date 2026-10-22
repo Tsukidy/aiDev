@@ -50,10 +50,6 @@ export const SKILLS_SRC = join(REPO, 'skills');
 export const SKILLS_CLI = 'skills@1.7.4';
 const SKILLS_CLI_MIN_NODE = [22, 20];
 export const ONBOARDING_PLUGIN_DIR = join(REPO, 'personal-extensions', 'paseo-firstmate-beads-onboarding');
-// What bd init --quiet --stealth creates in a non-git home
-// (docs/research/beads-cli-memory-surface.md A2): its store, a gate lock, and
-// a git repository.
-export const BEADS_CREATED_NAMES = ['.beads', '.beads.gate.lock', '.git'];
 
 // --- output and flags ---------------------------------------------------------------
 
