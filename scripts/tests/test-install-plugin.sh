@@ -189,6 +189,29 @@ check "the run after a failed reload exits 0" test $? -eq 0
 check "the run after a failed reload retries it" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
 check "the retried plugin is running" plugin_status_is "$sb" running
 
+# --- a reload interrupted once the daemon is done converges on re-run -------------------------
+
+sb=$(new_sandbox plugin-reload-interrupted)
+before=$(snapshot "$sb/home")
+install_in "$sb"
+age_build "$sb"
+: >"$sb/stub.log"
+(run_in "$sb" full STUB_FAIL=paseo-interrupt -- "$installer") 2>/dev/null # the shell's "Killed" notice
+check "the install interrupted at the reload did not finish" test $? -ne 0
+check "the interrupted call was the reload" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
+: >"$sb/stub.log"
+install_in "$sb"
+check "the run after an interrupted reload exits 0" test $? -eq 0
+check "it reloads once more: the interrupted build was never recorded" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
+check "it finds the copy as recorded, not edited" bash -c '! grep -qF "modified since install" "$1"' _ "$sb/out.txt"
+check "the plugin is running" plugin_status_is "$sb" running
+: >"$sb/stub.log"
+install_in "$sb"
+check "the run after that makes no daemon call" test -z "$(plugin_calls "$sb")"
+uninstall_in "$sb" --purge --yes
+check "uninstall after the converged re-run exits 0" test $? -eq 0
+check "an interrupted reload → re-run → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
 # --- an operator's edit of the copy reloads the plugin once, not on every run ----------------
 
 sb=$(new_sandbox plugin-edited)
