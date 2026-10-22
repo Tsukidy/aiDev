@@ -81,7 +81,7 @@ export function onboardingSkipList(ctx) {
 		if (action === 'current') return `${root} is on the beads onboarding skip list ${path} already`;
 		return `${path} already lists ${root} (the operator's entry) — left as is`;
 	};
-	const plan = (m) => {
+	const read = (m) => {
 		const text = readText(path);
 		const record = ours(m);
 		return { action: skipAction({ text, root, home: ctx.home, recorded: Boolean(record) }), record, text };
@@ -94,7 +94,7 @@ export function onboardingSkipList(ctx) {
 			if (lexists(path) && readText(path) === null) report.error(`${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`);
 		},
 
-		plan,
+		plan: (m) => ({ action: read(m).action }),
 
 		describe,
 
@@ -104,7 +104,7 @@ export function onboardingSkipList(ctx) {
 		// so an interrupted run leaves no entry or directory uninstall cannot
 		// find. Our entry, deleted since, comes back (as our hook entry does).
 		install(m, report, checkpoint) {
-			const { action, record, text } = plan(m);
+			const { action, record, text } = read(m);
 			report.say(describe({ action }));
 			if (action !== 'add') return;
 			const next = appendEntry(text, root);
