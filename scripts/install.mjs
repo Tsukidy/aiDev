@@ -81,12 +81,12 @@ if (!nodeVersionOk()) report.error(`node ${process.versions.node} is too old: th
 for (const tool of ['npx', 'bd', 'paseo']) {
 	if (!findOnPath(tool, ctx.env)) report.error(`${tool} not found on PATH (checked and reported, never installed)`);
 }
-const strictly = (msg) => (flags.strict ? report.error(`${msg} (--strict)`) : report.warn(msg));
+const warnOrStrictError = (msg) => (flags.strict ? report.error(`${msg} (--strict)`) : report.warn(msg));
 const bun = findOnPath('bun', ctx.env);
 if (bun) report.say(`bun: found at ${bun}`);
-else strictly("bun: not found — poteto-mode's PR tooling (scripts watch-pr and ship-pr, which the Shipping and Babysit playbooks run) needs it; install bun yourself");
+else warnOrStrictError("bun: not found — poteto-mode's PR tooling (scripts watch-pr and ship-pr, which the Shipping and Babysit playbooks run) needs it; install bun yourself");
 const common = worktreeCommonDir();
-if (common) strictly(`${REPO} is a linked git worktree (of ${common}): the beads onboarding skip list would name it, not the main checkout Paseo knows as the project — run the install from the main checkout`);
+if (common) warnOrStrictError(`${REPO} is a linked git worktree (of ${common}): the beads onboarding skip list would name it, not the main checkout Paseo knows as the project — run the install from the main checkout`);
 
 const mateHome = resolveMateHome(ctx);
 if (!mateHome) report.error(`first mate home not found under ${ctx.paseoHome} — launch the first mate once so its home exists (or set PASEO_HOME)`);
