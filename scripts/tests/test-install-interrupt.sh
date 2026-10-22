@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
 # Tests for an install interrupted at an external call that creates state
-# (#35): the skills CLI's add, and the beads orders installer's bd calls, which
-# run after the standing-orders installer has appended its block. Each call is
-# SIGKILLed once done (STUB_INTERRUPT), on a first install. Uninstall then
+# (#35): the skills CLI's add (partway through its copies, and once done), and
+# the beads orders installer's bd calls, which run after the standing-orders
+# installer has appended its block. Each call is SIGKILLed (STUB_INTERRUPT),
+# on a first install. Uninstall then
 # restores the pre-install snapshot, and a re-run converges on the manifest of
 # an install that was never interrupted, after which uninstall restores the
 # snapshot too. On the shared harness of lib/install-harness.sh; fully offline.
@@ -64,6 +65,8 @@ interrupted() {
 	check "$label: uninstall after the re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 }
 
+# The skills CLI has copied half the skills, and written its lock for those.
+interrupted skills-add-partway npx "--yes $skills_pin add "
 # The skills CLI has copied every skill and written its lock.
 interrupted skills-add npx "--yes $skills_pin add "
 interrupted skills-add npx "--yes $skills_pin add " rich

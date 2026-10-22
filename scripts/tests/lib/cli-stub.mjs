@@ -7,8 +7,10 @@
 // plus paseo-build (every plugin build fails). STUB_INTERRUPT lists
 // `<name>-<command>` calls that, once done (a plugin install or reload once
 // the daemon has built the plugin and saved its status), SIGKILL install.mjs
-// and every process between it and the stub, as Ctrl-C would. The build
-// applies the plugin's own host-supplied rule.
+// and every process between it and the stub, as Ctrl-C would;
+// skills-add-partway copies the first half of the skills asked for, writes
+// the lock for those, then kills. The build applies the plugin's own
+// host-supplied rule.
 // `skills add` plays the operator editing the beads onboarding skip list
 // mid-run, after the installer's plan has read it: STUB_SKIP_APPEND appends
 // that line to the list, then STUB_SKIP_MODE chmods it.
@@ -66,12 +68,17 @@ if (name === 'npx') {
 		: join(home, '.agents', '.skill-lock.json');
 	const lock = existsSync(lockPath) ? JSON.parse(readFileSync(lockPath, 'utf8')) : { version: 3, skills: {} };
 	const names = listAfter('-s');
+	let call = `skills-${cmd}`;
 	if (cmd === 'add') {
 		const config = isAbsolute(process.env.XDG_CONFIG_HOME ?? '') ? process.env.XDG_CONFIG_HOME : join(home, '.config');
 		const skipList = join(config, 'aidev', 'beads-onboarding-skip');
 		if (process.env.STUB_SKIP_APPEND) appendFileSync(skipList, `${process.env.STUB_SKIP_APPEND}\n`);
 		if (process.env.STUB_SKIP_MODE) chmodSync(skipList, process.env.STUB_SKIP_MODE);
 		const source = args[3];
+		if (interrupts.includes('skills-add-partway')) {
+			call = 'skills-add-partway';
+			names.splice(Math.ceil(names.length / 2));
+		}
 		for (const n of names) {
 			const dest = join(claude, 'skills', n);
 			rmSync(dest, { recursive: true, force: true });
@@ -86,7 +93,7 @@ if (name === 'npx') {
 	} else process.exit(64);
 	mkdirSync(join(lockPath, '..'), { recursive: true });
 	writeFileSync(lockPath, JSON.stringify(lock, null, 2));
-	exit(`skills-${cmd}`, 0);
+	exit(call, 0);
 }
 
 if (name === 'paseo') {
