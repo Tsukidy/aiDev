@@ -14,8 +14,10 @@
 //   reversePreconditions(m, report, dryRun)  uninstall's checks: paseo and the
 //                             daemon's plugin list, when a plugin is recorded
 //   reversePlan(m)            uninstall's --dry-run lines
-//   reverse(m, fail)          remove each recorded plugin's registration, then
-//                             its record; then our skip-list entry
+//   reverse(m, fail)          for each recorded plugin, remove the registration
+//                             Paseo lists under its id from its recorded copy,
+//                             if there is one, then the record; then our
+//                             skip-list entry
 //
 // The daemon builds a directory plugin from its source where it lies, on every
 // load, and keeps one whose build failed registered (Paseo's plugins/compiler.js
