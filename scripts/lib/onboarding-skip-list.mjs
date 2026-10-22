@@ -2,9 +2,12 @@
 // (ctx.skipListFile) of project bases the plugin never runs `bd init` in, one
 // absolute or ~/ path per line, matched by real path; a `#` at a line's start
 // or after whitespace starts a comment, so a `#` inside a path is part of it.
-// The plugin reads it on every workspace.created event; its parsing there
-// (index.server.ts, which may import only what the host supplies) is the twin
-// of entries() and sameDir() below.
+// The plugin reads it on every workspace.created event, in index.server.ts,
+// which may import only what the host supplies and so repeats the rules here:
+// its line rule is entries()'s. Its match is sameDir()'s for a path that
+// exists; for one that does not, realResolve() real-paths the longest existing
+// prefix and the plugin only path.resolve()s it. Such an entry can never name
+// this checkout, which exists, so the two agree on whether it is listed.
 //
 // The install adds this checkout's root, so the plugin never onboards the
 // skill source itself; the entry is recorded before it is written, and the
