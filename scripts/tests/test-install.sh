@@ -67,9 +67,7 @@ check "the operator's own skill is untouched" grep -qx 'description: operator sk
 check "question-guidelines and triage are installed" \
 	bash -c 'test -f "$1/question-guidelines/SKILL.md" && test -f "$1/triage/SKILL.md"' _ "$h/.claude/skills"
 
-# D14 (#45): grill-with-docs, to-spec, to-tickets, wayfinder, triage,
-# setup-matt-pocock-skills, retro and handoff start on their own; only the
-# skills below stay user-only. The stub skills CLI copies the source tree, so
+# D14 (#45): every skill not listed below starts on its own. The stub skills CLI copies the source tree, so
 # this pins the curated tree's frontmatter as the installed copies carry it.
 user_only="improve-codebase-architecture loop-me setup-ts-deep-modules teach to-questionnaire wait-what writing-beats writing-fragments writing-shape"
 flagged=$(for s in $all_skills; do
