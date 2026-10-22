@@ -168,7 +168,7 @@ check "the precondition report says bun is present" out_has "$rich" "bun: found"
 # The manifest.
 check "the manifest exists under the XDG state directory" test -f "$(manifest_of "$rich")"
 check "the manifest has a schema version, an install time and the repo commit" \
-	manifest_true "$rich" 'm.schemaVersion === 4 && /^\d{4}-\d\d-\d\dT/.test(m.installedAt) && /^[0-9a-f]{40}$/.test(m.repoCommit)'
+	manifest_true "$rich" 'm.schemaVersion === 5 && /^\d{4}-\d\d-\d\dT/.test(m.installedAt) && /^[0-9a-f]{40}$/.test(m.repoCommit)'
 check "every manifest item has a known kind and a path" manifest_true "$rich" \
 	'm.items.every((i) => ["skill","agent","hook-entry","marked-block","file","plugin","skip-entry","backup","dir","beads-db","skills-lock"].includes(i.kind) && typeof i.path === "string")'
 for kind in skill agent hook-entry marked-block file plugin skip-entry backup; do

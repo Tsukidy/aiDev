@@ -140,7 +140,7 @@ export function onboardingPlugin(ctx) {
 			// Recorded, and checkpointed, before the daemon is asked: a failed
 			// build leaves the plugin registered, and the call can be interrupted.
 			const item = record ?? add(m, pluginItem(id, copy));
-			files.forEach((f, i) => placeOwnedFile(ctx, m, report, f, planned[i]));
+			files.forEach((f, i) => placeOwnedFile(ctx, m, report, checkpoint, f, planned[i]));
 			checkpoint();
 			const call = CALLS[step.kind]?.(step);
 			if (!call) return;

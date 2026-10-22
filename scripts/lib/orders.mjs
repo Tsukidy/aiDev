@@ -67,9 +67,9 @@ export function ordersStep(ctx) {
 	// upgrade of a block that is not ours marks the record changedByInstall):
 	// then the backup has nothing of the install's to undo, and a change since
 	// a killed run is the operator's.
-	function recordCaptain(m) {
+	function recordCaptain(m, checkpoint) {
 		const existed = sharedFile(m, captain)?.existedBefore ?? readText(captain) !== null;
-		if (existed) backupOnce(ctx, m, captain);
+		if (existed) backupOnce(ctx, m, checkpoint, captain);
 		noteSharedFile(m, captain, existed);
 		return existed;
 	}
@@ -110,7 +110,7 @@ export function ordersStep(ctx) {
 		describe: () => ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
 
 		install(m, report, checkpoint) {
-			const existed = recordCaptain(m);
+			const existed = recordCaptain(m, checkpoint);
 			for (const o of ORDERS) {
 				const pre = readText(captain) ?? '';
 				const ours = ourBlock(m, o.block);

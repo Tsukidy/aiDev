@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# Tests for an install interrupted at an external call that creates state
+# Tests for an interrupted install. At an external call that creates state
 # (#35): the skills CLI's add (partway through its copies, and once done), and
 # the beads orders installer's bd calls, which run after the standing-orders
-# installer has appended its block. Each call is SIGKILLed (STUB_INTERRUPT),
-# on a first install. Uninstall then
+# installer has appended its block. Each call is SIGKILLed (STUB_INTERRUPT).
+# Between the installer's own file writes (#50): after each group of them, and
+# once a write is recorded but not made, at the installer's test kill points
+# (AIDEV_TEST_KILL). Each kill is on a first install. Uninstall then
 # restores the pre-install snapshot, and a re-run converges on the manifest of
 # an install that was never interrupted, after which uninstall restores the
 # snapshot too. On the shared harness of lib/install-harness.sh; fully offline.
@@ -25,56 +27,99 @@ records() { # records <sb>
 	' "$(manifest_of "$1")" "$1/home"
 }
 
-interrupt() { # interrupt <sb> <call>  — a first install, SIGKILLed once <call> is done
-	(run_in "$1" full STUB_INTERRUPT="$2" -- "$installer") 2>/dev/null # the shell's "Killed" notice
+interrupt() { # interrupt <sb> <VAR=value>  — a first install, SIGKILLed where VAR=value says
+	(run_in "$1" full "$2" -- "$installer") 2>/dev/null # the shell's "Killed" notice
 }
 
 last_call_is() { # last_call_is <sb> <name> <args prefix>
 	tail -n 1 "$1/stub.log" | grep -qF -- "$2|$3"
 }
 
-# interrupted <call> <stub name> <args prefix> [rich]
+# An uninterrupted install's records, one per sandbox kind.
+reference_records() { # reference_records <plain|rich>
+	local ref=$tmp/sb/ref-$1
+	if [ ! -d "$ref" ]; then
+		new_sandbox "ref-$1" "${1#plain}" >/dev/null
+		install_in "$ref"
+	fi
+	records "$ref"
+}
+
+# interrupted <label> <VAR=value> <plain|rich> [<stub name> <args prefix>]
+# With a stub call named, the kill must come at it. Leaves sb as the re-run's
+# sandbox, with the re-run's output in $sb/rerun.txt.
 interrupted() {
-	local call=$1 name=$2 args=$3 kind=${4:-plain} sb ref before status
-	local label="$call ($kind)"
+	local label="$1 ($3)" kill=$2 kind=$3 rich=${3#plain} before status
+	local slug=${label//[^A-Za-z0-9.-]/-}
+	shift 3
 
-	ref=$(new_sandbox "ref-$call-$kind" "${4:-}")
-	install_in "$ref"
-
-	sb=$(new_sandbox "uninstall-$call-$kind" "${4:-}")
+	sb=$(new_sandbox "uninstall-$slug" "$rich")
 	before=$(snapshot "$sb/home")
-	interrupt "$sb" "$call"
+	interrupt "$sb" "$kill"
 	check "$label: the install was killed" test $? -ne 0
-	check "$label: at that call" last_call_is "$sb" "$name" "$args"
+	if [ $# -gt 0 ]; then check "$label: at that call" last_call_is "$sb" "$@"; fi
 	uninstall_in "$sb" --purge --yes
 	status=$?
 	check "$label: uninstall right after exits 0" test "$status" -eq 0
 	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
 	check "$label: uninstall right after restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-	sb=$(new_sandbox "rerun-$call-$kind" "${4:-}")
+	sb=$(new_sandbox "rerun-$slug" "$rich")
 	before=$(snapshot "$sb/home")
-	interrupt "$sb" "$call"
+	interrupt "$sb" "$kill"
 	install_in "$sb"
 	status=$?
+	cp "$sb/out.txt" "$sb/rerun.txt"
 	check "$label: the re-run exits 0" test "$status" -eq 0
 	[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
-	check "$label: the re-run finds nothing of ours installed from elsewhere" bash -c '! grep -qF "from elsewhere" "$1"' _ "$sb/out.txt"
-	check "$label: the re-run records what an uninterrupted install does" test "$(records "$sb")" = "$(records "$ref")"
+	check "$label: the re-run finds nothing of ours installed from elsewhere" bash -c '! grep -qF "from elsewhere" "$1"' _ "$sb/rerun.txt"
+	check "$label: the re-run records what an uninterrupted install does" test "$(records "$sb")" = "$(reference_records "$kind")"
 	uninstall_in "$sb" --purge --yes
 	check "$label: uninstall after the re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 }
 
 # The skills CLI has copied half the skills, and written its lock for those.
-interrupted skills-add-partway npx "--yes $skills_pin add "
+interrupted skills-add-partway STUB_INTERRUPT=skills-add-partway plain npx "--yes $skills_pin add "
 # The skills CLI has copied every skill and written its lock.
-interrupted skills-add npx "--yes $skills_pin add "
-interrupted skills-add npx "--yes $skills_pin add " rich
+interrupted skills-add STUB_INTERRUPT=skills-add plain npx "--yes $skills_pin add "
+interrupted skills-add STUB_INTERRUPT=skills-add rich npx "--yes $skills_pin add "
 # The standing-orders block is appended; the beads installer has just begun.
-interrupted bd-ready bd "ready"
-interrupted bd-ready bd "ready" rich
+interrupted bd-ready STUB_INTERRUPT=bd-ready plain bd "ready"
+interrupted bd-ready STUB_INTERRUPT=bd-ready rich bd "ready"
 # bd init has created the mate's home database; its orders block is not appended yet.
-interrupted bd-init bd "init"
+interrupted bd-init STUB_INTERRUPT=bd-init plain bd "init"
+
+# --- killed between the installer's own writes (#50) -----------------------------
+
+# The re-run takes none of the installer's own files, blocks or entries for the
+# operator's.
+reran_as_ours() { # reran_as_ours <label>
+	check "$1: the re-run backs up none of its own files" bash -c '! grep -qF "already existed" "$1"' _ "$sb/rerun.txt"
+	check "$1: the re-run finds none of its own blocks or entries unrecorded" bash -c '! grep -qF "not added by this install" "$1"' _ "$sb/rerun.txt"
+}
+
+# After each group of writes: the agents; the routing hook's files and its
+# settings.json entry; the model sheet; the CLAUDE.md block; the license copies.
+for point in agents hook sheet claude-md licenses; do
+	for kind in plain rich; do
+		interrupted "after $point" "AIDEV_TEST_KILL=$point" "$kind"
+		reran_as_ours "after $point ($kind)"
+	done
+done
+
+# A write recorded, and the record saved, but not made: a shared file's new
+# part, and a file whose whole content is ours, new or (rich) replacing the
+# operator's.
+for file in settings.json CLAUDE.md agents/comment-sicko.md; do
+	for kind in plain rich; do
+		interrupted "before writing $file" "AIDEV_TEST_KILL=write ~/.claude/$file" "$kind"
+		if [ "$file$kind" != agents/comment-sicko.mdrich ]; then reran_as_ours "before writing $file ($kind)"; fi
+	done
+done
+# The operator's agent, backed up, not yet replaced: the re-run replaces it
+# once, keeping the backup, which uninstall put back (checked above).
+label="before writing agents/comment-sicko.md (rich)"
+check "$label: the re-run replaces the operator's agent" test "$(grep -F "already existed" "$sb/rerun.txt")" = "install: $sb/home/.claude/agents/comment-sicko.md already existed — backed up and replaced; uninstall restores it"
 
 # --- what captain.md gains between a kill at bd-ready and the re-run is not ours ---
 
@@ -98,7 +143,7 @@ operator_line_survives() { # operator_line_survives [rich]
 	sb=$(new_sandbox "operator-$kind" "${1:-}")
 	before=$(snapshot_less_captain "$sb")
 	pre=$(cat "$(captain_of "$sb")" 2>/dev/null || true)
-	interrupt "$sb" bd-ready
+	interrupt "$sb" STUB_INTERRUPT=bd-ready
 	printf '%s\n' "$line" >>"$(captain_of "$sb")"
 	install_in "$sb"
 	status=$?
@@ -141,7 +186,7 @@ unsettled_block() { # unsettled_block [rich]
 
 	sb=$(new_sandbox "uninstall-unsettled-$kind" "${1:-}")
 	before=$(snapshot "$sb/home")
-	interrupt "$sb" bd-ready
+	interrupt "$sb" STUB_INTERRUPT=bd-ready
 	unsettle_standing_orders "$sb"
 	check "$label: the record is an intent" manifest_true "$sb" 'm.items.some((i) => i.id === "aidev-standing-orders" && i.at && !("before" in i))'
 	uninstall_in "$sb" --purge --yes
@@ -152,7 +197,7 @@ unsettled_block() { # unsettled_block [rich]
 
 	sb=$(new_sandbox "rerun-unsettled-$kind" "${1:-}")
 	before=$(snapshot "$sb/home")
-	interrupt "$sb" bd-ready
+	interrupt "$sb" STUB_INTERRUPT=bd-ready
 	unsettle_standing_orders "$sb"
 	install_in "$sb"
 	status=$?
@@ -204,7 +249,7 @@ foreign_blocks() {
 	sb=$(new_sandbox foreign)
 	cp "$(captain_of "$ref")" "$(captain_of "$sb")"
 	before=$(snapshot "$sb/home")
-	interrupt "$sb" bd-ready
+	interrupt "$sb" STUB_INTERRUPT=bd-ready
 	check "$label: the install was killed" test $? -ne 0
 	check "$label: at that call" last_call_is "$sb" bd "ready"
 	check "$label: the kill left captain.md's record and backup" manifest_true "$sb" 'm.items.some((i) => i.kind === "backup" && i.of.endsWith("/captain.md")) && m.items.some((i) => i.shared && i.path.endsWith("/captain.md"))'
@@ -228,7 +273,7 @@ foreign_blocks_edited() {
 	install_in "$ref"
 	sb=$(new_sandbox foreign-edited)
 	cp "$(captain_of "$ref")" "$(captain_of "$sb")"
-	interrupt "$sb" bd-ready
+	interrupt "$sb" STUB_INTERRUPT=bd-ready
 	check "$label: the install was killed" test $? -ne 0
 	printf 'OPERATOR: never deploy on Fridays.\n' >>"$(captain_of "$sb")"
 	install_in "$sb"
@@ -256,7 +301,7 @@ foreign_block_upgraded() {
 			install_in "$sb"
 			check "$label ($run): the first run upgrades it" out_has "$sb" "upgraded the standing orders block"
 		else
-			interrupt "$sb" bd-ready
+			interrupt "$sb" STUB_INTERRUPT=bd-ready
 			check "$label ($run): the install was killed once it had upgraded it" test $? -ne 0
 		fi
 		check "$label ($run): the run keeps the backup" captain_backed_up "$sb"

@@ -29,6 +29,11 @@
 //   skills-lock   the skills CLI's lock (existedBefore)
 //
 // `existedBefore` on a file says whether it was there before the install.
+// An agent or a file whose whole content is ours is recorded before each
+// write (#50): `next` is the sha256 the write leaves, and `sha256` what we
+// wrote before it, null for a file not written yet; placeOwnedFile in
+// aidev-install.mjs settles both once the write is made. A backup is recorded
+// before its copy is made, with the sha256 of the file it copies.
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -41,7 +46,11 @@ import { basename, dirname } from 'node:path';
 // since #35, which lets a marked-block be an intent (at, no before): a
 // version 3 needs no upgrade, and an older checkout's uninstall would strip
 // an unsettled block without the text it was appended after, so it refuses a 4.
-export const SCHEMA_VERSION = 4;
+// 5 since #50, which records a write before it is made (next, and sha256 null
+// for a file not written yet): a version 4 needs no upgrade, and an older
+// checkout's uninstall would keep a file whose record has not settled as
+// modified since install, so it refuses a 5.
+export const SCHEMA_VERSION = 5;
 export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'skip-entry', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {

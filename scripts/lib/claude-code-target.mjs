@@ -9,11 +9,9 @@ import { join } from 'node:path';
 import {
 	REPO,
 	SKILLS_SRC,
-	backupOnce,
 	blockRange,
 	jsonLike,
 	lexists,
-	noteSharedFile,
 	placeOwnedFile,
 	readJsonObject,
 	readSkillsLock,
@@ -21,9 +19,11 @@ import {
 	repoAgents,
 	reverseOwnedFile,
 	reverseSharedFile,
+	settleOwnedFile,
 	skillsCli,
+	testKillPoint,
 	upsertBlock,
-	writeShared,
+	writeSharedFile,
 } from './aidev-install.mjs';
 import {
 	add,
@@ -108,8 +108,8 @@ export function claudeCodeTarget(ctx) {
 
 	// --- step 5: the routing hook, added or (when its skill is excluded) taken out --------
 
-	function installHook(m, report) {
-		for (const f of hookFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src), mode: f.mode });
+	function installHook(m, report, checkpoint) {
+		for (const f of hookFiles) placeOwnedFile(ctx, m, report, checkpoint, { path: f.dest, content: readFileSync(f.src), mode: f.mode });
 		const text = readText(settings);
 		const json = readJsonObject(settings);
 		const ours = first(m, 'hook-entry', (i) => i.path === settings);
@@ -117,14 +117,14 @@ export function claudeCodeTarget(ctx) {
 			if (!ours) report.say(`${settings} already has a SessionStart entry for ${hookScript}, not added by this install — left as is`);
 			return;
 		}
-		// Absent: add it (again, if the operator deleted ours since install).
-		backupOnce(ctx, m, settings);
+		// Absent: add it (again, if the operator deleted ours since install, or
+		// a run killed before writing it recorded it).
 		json.hooks ??= {};
 		json.hooks.SessionStart ??= [];
 		json.hooks.SessionStart.push({ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: shQuote(hookScript) }] });
-		writeShared(settings, jsonLike(json, text));
 		if (!ours) add(m, hookEntryItem(NAME, settings, 'SessionStart', hookScript));
-		noteSharedFile(m, settings, sharedFile(m, settings)?.existedBefore ?? text !== null, 'json');
+		const existedBefore = sharedFile(m, settings)?.existedBefore ?? text !== null;
+		writeSharedFile(ctx, m, checkpoint, settings, jsonLike(json, text), { existedBefore, format: 'json' });
 	}
 
 	// The same reversal uninstall uses: settings.json holds only our hook entry.
@@ -220,22 +220,28 @@ export function claudeCodeTarget(ctx) {
 			// Steps 3–4. The carried and effort agents of every installed skill,
 			// by bare name; an agent whose skill is now excluded comes back out.
 			const wanted = agents.filter((a) => plan.desired.includes(a.skill));
-			for (const a of wanted) placeOwnedFile(ctx, m, report, { kind: 'agent', name: a.name, path: a.dest, content: readFileSync(a.src) });
+			for (const a of wanted) placeOwnedFile(ctx, m, report, checkpoint, { kind: 'agent', name: a.name, path: a.dest, content: readFileSync(a.src) });
 			for (const rec of items(m, 'agent', (i) => !wanted.some((a) => a.dest === i.path))) {
 				const kept = reverseOwnedFile(m, rec);
 				if (kept) report.say(`kept ${kept}`);
 			}
+			testKillPoint(ctx, 'agents');
 
 			// Step 5. The routing hook mandates the router, so it follows it.
-			if (plan.desired.includes(ROUTER)) installHook(m, report);
+			if (plan.desired.includes(ROUTER)) installHook(m, report, checkpoint);
 			else {
 				report.warn(`${ROUTER} is excluded, so the SessionStart routing hook is not installed`);
 				removeHook(m, report);
 			}
+			testKillPoint(ctx, 'hook');
 
-			// Step 6. The model sheet, setup-pstack's default shape, only when absent.
-			if (!existsSync(sheet)) placeOwnedFile(ctx, m, report, { path: sheet, content: defaultSheet() });
-			else if (!ownedFile(m, sheet)) report.say(`${sheet} already exists — kept as is`);
+			// Step 6. The model sheet, setup-pstack's default shape, only when
+			// absent. Present, its record settles what a killed run wrote.
+			const sheetRecord = ownedFile(m, sheet);
+			if (!existsSync(sheet)) placeOwnedFile(ctx, m, report, checkpoint, { path: sheet, content: defaultSheet() });
+			else if (sheetRecord) settleOwnedFile(m, sheetRecord);
+			else report.say(`${sheet} already exists — kept as is`);
+			testKillPoint(ctx, 'sheet');
 
 			// Step 7. The CLAUDE.md block with the sheet include.
 			const before = readText(claudeMd);
@@ -246,11 +252,15 @@ export function claudeCodeTarget(ctx) {
 			}
 			const up = upsertBlock(before, SHEET_BLOCK, `@${sheet}\n`);
 			if (up.text !== before) {
-				backupOnce(ctx, m, claudeMd);
-				writeShared(claudeMd, up.text);
-				noteSharedFile(m, claudeMd, sharedFile(m, claudeMd)?.existedBefore ?? before !== null);
+				// Appended (again, if a run killed before writing it recorded it):
+				// the record takes the separator put in front of it this time.
+				const appended = before === null || !blockRange(before, SHEET_BLOCK);
+				if (!ours) add(m, markedBlockItem(claudeMd, SHEET_BLOCK, up.before));
+				else if (appended) ours.before = up.before;
+				const existedBefore = sharedFile(m, claudeMd)?.existedBefore ?? before !== null;
+				writeSharedFile(ctx, m, checkpoint, claudeMd, up.text, { existedBefore, format: 'text' });
 			}
-			if (!ours) add(m, markedBlockItem(claudeMd, SHEET_BLOCK, up.before));
+			testKillPoint(ctx, 'claude-md');
 		},
 	};
 }
