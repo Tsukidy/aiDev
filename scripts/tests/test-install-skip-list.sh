@@ -114,16 +114,6 @@ check "a re-run puts our deleted entry back, once" test "$(entries "$sb")" = "$r
 uninstall_in "$sb" --purge --yes
 check "uninstall then deletes the list the install created" test ! -e "$(skip_list_of "$sb")"
 
-# A list the #34 install created, under that install's header, is still ours to delete.
-sb=$(new_sandbox skip-34-header)
-before=$(snapshot "$sb/home")
-install_in "$sb"
-printf '%s\n' '# Paseo projects the firstmate-beads-onboarding plugin never initializes beads in:' \
-	'# one absolute or ~/ path per line, matched by real path; # starts a comment.' "$repo" >"$(skip_list_of "$sb")"
-uninstall_in "$sb" --purge --yes
-check "uninstall deletes a list it created under the #34 header" test ! -e "$(skip_list_of "$sb")"
-check "and restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
-
 # An install from before #34 (a version-2 manifest, no skip list) gains the entry.
 sb=$(new_sandbox skip-from-v2)
 before=$(snapshot "$sb/home")

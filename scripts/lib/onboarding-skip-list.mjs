@@ -22,11 +22,9 @@ import { REPO, lexists, readText, realResolve, writeShared } from './aidev-insta
 import { add, drop, first, items, replace, skipEntryItem } from './manifest.mjs';
 
 // What a skip list the install creates starts with.
-const TITLE = '# Paseo projects the firstmate-beads-onboarding plugin never initializes beads in:\n';
-export const HEADER = `${TITLE}# one absolute or ~/ path per line, matched by real path; a # at the start of a line or after whitespace starts a comment.\n`;
-// A list the #34 install created starts with that install's header, from
-// before a `#` inside a path was part of it; uninstall deletes it as ours too.
-const CREATED_HEADERS = [HEADER, `${TITLE}# one absolute or ~/ path per line, matched by real path; # starts a comment.\n`];
+export const HEADER =
+	'# Paseo projects the firstmate-beads-onboarding plugin never initializes beads in:\n' +
+	'# one absolute or ~/ path per line, matched by real path; # starts a comment.\n';
 
 export const entries = (text) =>
 	text
@@ -71,7 +69,7 @@ export function removeEntry(text, { entry, before = '', existedBefore }) {
 		lines.splice(i, 1);
 		out = lines.join('\n');
 	}
-	return !existedBefore && (CREATED_HEADERS.includes(out) || out.trim() === '') ? null : out;
+	return !existedBefore && (out === HEADER || out.trim() === '') ? null : out;
 }
 
 export function onboardingSkipList(ctx) {
