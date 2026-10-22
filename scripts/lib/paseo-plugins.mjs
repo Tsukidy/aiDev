@@ -1,14 +1,16 @@
-// The beads onboarding plugin step of install and uninstall (#33). Shaped like
-// a runtime target (targets.mjs), but runtime-neutral and outside that registry:
+// The Paseo plugins step of install and uninstall (#33, #39): every plugin of
+// the repo (repoPlugins), each registered from its own copy. Shaped like a
+// runtime target (targets.mjs), but runtime-neutral and outside that registry:
 //
-//   preconditions(m, report)  install's read-only checks: the plugin's id and
+//   preconditions(m, report)  install's read-only checks: each plugin's id and
 //                             file list, the daemon's plugin list, a
 //                             registration from a copy that has since moved
 //   paths()                   every path it writes (after preconditions)
-//   plan(m)                   → { step, ... } (step: see pluginStep)
-//   describe(plan)            its lines, printed by --dry-run
-//   install(m, plan, report, checkpoint)  place the copy, record the plugin,
-//                             make the step's daemon call
+//   plan(m)                   → one { step, ... } per plugin (step: see pluginStep)
+//   describe(plans)           its lines, printed by --dry-run
+//   install(m, plans, report, checkpoint)  per plugin, in order: place the
+//                             copy, record the plugin, make the step's daemon
+//                             call; a failed call stops the step
 //   reversePreconditions(m, report, dryRun)  uninstall's checks: paseo and the
 //                             daemon's plugin list, when a plugin is recorded
 //   reversePlan(m)            uninstall's --dry-run lines
@@ -22,10 +24,20 @@
 // package.json lists, nothing installed beside them, and the plugin is recorded
 // before the daemon is asked.
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { ONBOARDING_PLUGIN_DIR, findOnPath, ownedFileAction, placeOwnedFile, run, sha256 } from './aidev-install.mjs';
+import { REPO, findOnPath, ownedFileAction, placeOwnedFile, run, sha256 } from './aidev-install.mjs';
 import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
+
+const EXTENSIONS_SRC = join(REPO, 'personal-extensions');
+
+// The repo's Paseo plugins, as skills/ is its skills: every directory of
+// personal-extensions/ that holds a paseo-plugin.json, in sorted order.
+export const repoPlugins = () =>
+	readdirSync(EXTENSIONS_SRC)
+		.sort()
+		.map((d) => join(EXTENSIONS_SRC, d))
+		.filter((d) => existsSync(join(d, 'paseo-plugin.json')));
 
 // The daemon's plugin registrations as { id, path, status }, or null when the
 // daemon does not answer (`paseo plugin ls --json`). `path` is the directory
@@ -33,7 +45,7 @@ import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
 // running | failed | disabled (Paseo's resolvePluginStatus): disabled means
 // the plugin, or all plugins, are switched off, and Paseo then refuses to
 // reload it; failed means its build or start failed, and it stays registered.
-export function paseoPlugins(ctx) {
+export function daemonPlugins(ctx) {
 	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
 	if (r.status !== 0) return null;
 	try {
@@ -84,68 +96,76 @@ export function invalidFileEntries(listed, dir) {
 	});
 }
 
-export function onboardingPlugin(ctx) {
-	let id;
-	let copy;
-	let files = [];
-	let plugins = null;
-	const source = (name) => join(ONBOARDING_PLUGIN_DIR, name);
+export function pluginsStep(ctx) {
+	let plugins = [];
+	let registered = null;
 
 	return {
 		preconditions(m, report) {
-			id = JSON.parse(readFileSync(source('paseo-plugin.json'), 'utf8')).id;
-			copy = join(ctx.dataDir, 'paseo-plugins', id);
-			const listed = JSON.parse(readFileSync(source('package.json'), 'utf8')).files;
-			const bad = invalidFileEntries(listed, ONBOARDING_PLUGIN_DIR);
-			if (bad.length) report.error(`${source('package.json')} "files" must list plain names of files in ${ONBOARDING_PLUGIN_DIR}: ${bad.join(', ')}`);
-			else files = listed.map((name) => ({ path: join(copy, name), content: readFileSync(source(name)) }));
+			plugins = repoPlugins().map((dir) => {
+				const source = (name) => join(dir, name);
+				const id = JSON.parse(readFileSync(source('paseo-plugin.json'), 'utf8')).id;
+				const copy = join(ctx.dataDir, 'paseo-plugins', id);
+				const listed = JSON.parse(readFileSync(source('package.json'), 'utf8')).files;
+				const bad = invalidFileEntries(listed, dir);
+				if (bad.length) report.error(`${source('package.json')} "files" must list plain names of files in ${dir}: ${bad.join(', ')}`);
+				const files = bad.length ? [] : listed.map((name) => ({ path: join(copy, name), content: readFileSync(source(name)) }));
+				return { id, copy, files };
+			});
 			if (findOnPath('paseo', ctx.env)) {
-				plugins = paseoPlugins(ctx);
-				if (!plugins) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
+				registered = daemonPlugins(ctx);
+				if (!registered) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
 			}
-			// Our plugin registered from a copy an earlier install recorded
+			// A plugin of ours registered from a copy an earlier install recorded
 			// elsewhere: the data directory moved, and a new copy would orphan it.
-			const moved = m && plugins && first(m, 'plugin', (i) => i.id === id && i.path !== copy && registrationOf(plugins, i)?.ours);
-			if (moved) report.error(`plugin ${id} is registered from ${moved.path}, which an earlier install recorded, but the data directory is now ${ctx.dataDir} — run uninstall first, then install`);
+			for (const { id, copy } of plugins) {
+				const moved = m && registered && first(m, 'plugin', (i) => i.id === id && i.path !== copy && registrationOf(registered, i)?.ours);
+				if (moved) report.error(`plugin ${id} is registered from ${moved.path}, which an earlier install recorded, but the data directory is now ${ctx.dataDir} — run uninstall first, then install`);
+			}
 		},
 
-		paths: () => files.map((f) => f.path),
+		paths: () => plugins.flatMap((p) => p.files.map((f) => f.path)),
 
 		// The copy's files as placing them will leave them (an edited file of
 		// ours is kept), and their hash: what the daemon builds when it next
 		// loads the plugin. The build is stale until a successful install or
 		// reload records that hash.
-		plan(m) {
-			const planned = files.map((f) => ownedFileAction(m, f));
-			const buildSha256 = sha256(files.map((f, i) => `${basename(f.path)} ${sha256(planned[i].bytes)}\n`).join(''));
-			const record = first(m, 'plugin', (i) => i.id === id && i.path === copy);
-			const registration = registrationOf(plugins, { id, path: copy });
-			return { step: pluginStep({ id, copy, registration, stale: record?.buildSha256 !== buildSha256 }), planned, record, buildSha256 };
-		},
+		plan: (m) =>
+			plugins.map((plugin) => {
+				const { id, copy, files } = plugin;
+				const planned = files.map((f) => ownedFileAction(m, f));
+				const buildSha256 = sha256(files.map((f, i) => `${basename(f.path)} ${sha256(planned[i].bytes)}\n`).join(''));
+				const record = first(m, 'plugin', (i) => i.id === id && i.path === copy);
+				const registration = registrationOf(registered, { id, path: copy });
+				return { plugin, step: pluginStep({ id, copy, registration, stale: record?.buildSha256 !== buildSha256 }), planned, record, buildSha256 };
+			}),
 
-		describe: (plan) => [describeStep(plan.step)],
+		describe: (plans) => plans.map((p) => describeStep(p.step)),
 
-		install(m, { step, planned, record, buildSha256 }, report, checkpoint) {
-			report.say(describeStep(step));
-			if (step.kind === 'foreign') return;
-			// Recorded, and checkpointed, before the daemon is asked: a failed
-			// build leaves the plugin registered, and the call can be interrupted.
-			const item = record ?? add(m, pluginItem(id, copy));
-			files.forEach((f, i) => placeOwnedFile(ctx, m, report, checkpoint, f, planned[i]));
-			checkpoint();
-			const call = CALLS[step.kind]?.(step);
-			if (!call) return;
-			const r = run(ctx, 'paseo', ['plugin', ...call]);
-			if (r.status !== 0) return report.error(`paseo plugin ${call.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows why; re-run to retry`);
-			replace(m, item, pluginItem(id, copy, buildSha256));
+		install(m, plans, report, checkpoint) {
+			for (const { plugin, step, planned, record, buildSha256 } of plans) {
+				const { id, copy, files } = plugin;
+				report.say(describeStep(step));
+				if (step.kind === 'foreign') continue;
+				// Recorded, and checkpointed, before the daemon is asked: a failed
+				// build leaves the plugin registered, and the call can be interrupted.
+				const item = record ?? add(m, pluginItem(id, copy));
+				files.forEach((f, i) => placeOwnedFile(ctx, m, report, checkpoint, f, planned[i]));
+				checkpoint();
+				const call = CALLS[step.kind]?.(step);
+				if (!call) continue;
+				const r = run(ctx, 'paseo', ['plugin', ...call]);
+				if (r.status !== 0) return report.error(`paseo plugin ${call.join(' ')} failed (exit ${r.status}) — \`paseo plugin ls\` shows why; re-run to retry`);
+				replace(m, item, pluginItem(id, copy, buildSha256));
+			}
 		},
 
 		reversePreconditions(m, report, dryRun) {
 			if (!items(m, 'plugin').length) return;
-			if (!findOnPath('paseo', ctx.env)) return report.error('paseo not found on PATH — needed to remove the onboarding plugin');
+			if (!findOnPath('paseo', ctx.env)) return report.error('paseo not found on PATH — needed to remove the recorded Paseo plugins');
 			if (dryRun) return;
-			plugins = paseoPlugins(ctx);
-			if (plugins === null) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
+			registered = daemonPlugins(ctx);
+			if (registered === null) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
 		},
 
 		reversePlan: (m) => items(m, 'plugin').map((p) => `paseo plugin remove ${p.id}, if Paseo lists it from ${p.path}`),
@@ -154,7 +174,7 @@ export function onboardingPlugin(ctx) {
 		// once that registration is gone, or Paseo has none.
 		reverse(m, fail) {
 			for (const p of items(m, 'plugin')) {
-				if (registrationOf(plugins, p)?.ours) {
+				if (registrationOf(registered, p)?.ours) {
 					const r = run(ctx, 'paseo', ['plugin', 'remove', p.id]);
 					if (r.status !== 0) fail(`paseo plugin remove ${p.id} failed (exit ${r.status})`);
 				}

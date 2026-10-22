@@ -3,7 +3,7 @@
 # Tests for install.mjs and uninstall.mjs, the one-command installer and
 # manifest-driven uninstaller from ticket #21 (spec #11 D5–D9), on the shared
 # harness of lib/install-harness.sh: sandboxed homes, stub CLIs, fully
-# offline. The onboarding plugin step has its own cases in
+# offline. The Paseo plugins step has its own cases in
 # test-install-plugin.sh.
 #
 # Usage: tests/test-install.sh

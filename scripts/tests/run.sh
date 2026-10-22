@@ -14,7 +14,7 @@
 # skills/LICENSE-aidev (#29), and the
 # standing-orders installer from ticket #08 (its own harness in
 # test-standing-orders.sh), and the one-command installer and uninstaller
-# from ticket #21 (test-install.sh, with its onboarding plugin step in
+# from ticket #21 (test-install.sh, with its Paseo plugins step in
 # test-install-plugin.sh, #33, and its onboarding skip list in
 # test-install-skip-list.sh, #34, and installs interrupted at an external call
 # in test-install-interrupt.sh, #35, on the shared lib/install-harness.sh), and the
@@ -681,8 +681,8 @@ run_harness test-standing-orders.sh "the standing-orders installer tests pass (t
 run_harness test-install.sh "the installer and uninstaller tests pass (ticket #21)"
 check "the install manifest's changes hold (#37)" node --test "$here/manifest.test.mjs"
 check "a marked block's leading text (#35) and an owned file's last write (#50) are read from their records" node --test "$here/aidev-install.test.mjs"
-check "the onboarding plugin step's decision table holds (#33)" node --test "$here/onboarding-plugin.test.mjs"
-run_harness test-install-plugin.sh "the installer's onboarding plugin step tests pass (#33)"
+check "the Paseo plugins step's decision table holds (#33)" node --test "$here/paseo-plugins.test.mjs"
+run_harness test-install-plugin.sh "the installer's Paseo plugins step tests pass (#33)"
 run_harness test-install-skip-list.sh "the installer's onboarding skip-list tests pass (#34)"
 run_harness test-install-interrupt.sh "an install interrupted at an external call converges (#35)"
 run_harness ../../personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh \

@@ -21,9 +21,9 @@
 //   7. a marked block in the target's CLAUDE.md including the sheet
 //   8. the standing-orders and beads captain-orders installers (their own
 //      idempotency; lib/orders.mjs), this checkout's root on the beads
-//      onboarding skip list, and the beads onboarding plugin, registered with
-//      Paseo from a copy (`paseo plugin install`, or `reload` to rebuild
-//      ours; lib/onboarding-plugin.mjs)
+//      onboarding skip list (lib/onboarding-skip-list.mjs), and the repo's
+//      Paseo plugins, each registered with Paseo from a copy (`paseo plugin
+//      install`, or `reload` to rebuild ours; lib/paseo-plugins.mjs)
 //   9. the install manifest under $XDG_STATE_HOME/aidev, with a backup of
 //      every pre-existing file modified; NOTICE and licenses beside the install
 //
@@ -57,9 +57,9 @@ import {
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
 import { dirItem, drop, ensure, items, newManifest } from './lib/manifest.mjs';
-import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
 import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { ordersStep } from './lib/orders.mjs';
+import { pluginsStep } from './lib/paseo-plugins.mjs';
 import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
@@ -67,7 +67,7 @@ const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'inst
 const ctx = resolveContext(process.env);
 const orders = ordersStep(ctx);
 const skipList = onboardingSkipList(ctx);
-const plugin = onboardingPlugin(ctx);
+const plugins = pluginsStep(ctx);
 
 // --- 1. preconditions -------------------------------------------------------------
 
@@ -90,7 +90,7 @@ try {
 } catch (e) {
 	report.error(e.message);
 }
-plugin.preconditions(m, report);
+plugins.preconditions(m, report);
 skipList.preconditions(report);
 
 const targets = installTargets(ctx);
@@ -106,7 +106,7 @@ const written = [
 	join(ctx.backupsDir, 'x'),
 	...licenseFiles.map((f) => f.dest),
 	skipList.path,
-	...plugin.paths(),
+	...plugins.paths(),
 	...targets.flatMap((t) => t.paths()),
 	...orders.paths(),
 ];
@@ -143,7 +143,7 @@ const plans = targets.map((t) => {
 	return plan;
 });
 const skipPlan = skipList.plan(m);
-const pluginPlan = plugin.plan(m);
+const pluginPlans = plugins.plan(m);
 
 if (flags['dry-run']) {
 	const plan = [
@@ -151,7 +151,7 @@ if (flags['dry-run']) {
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
 		...orders.describe(),
 		skipList.describe(skipPlan),
-		...plugin.describe(pluginPlan),
+		...plugins.describe(pluginPlans),
 		`manifest ${ctx.manifestPath}`,
 	];
 	console.log('install --dry-run: nothing written. The plan:');
@@ -191,13 +191,13 @@ for (const f of licenseFiles) placeOwnedFile(ctx, m, report, checkpoint, { path:
 orders.install(m, report, checkpoint);
 if (report.errors.length) finish(1);
 
-// Step 8b: this checkout on the beads onboarding skip list, so the plugin
-// never onboards it, before the plugin is registered (#34).
+// Step 8b: this checkout on the beads onboarding skip list, so that plugin
+// never onboards it, before the plugins are registered (#34).
 skipList.install(m, report, checkpoint);
 if (report.errors.length) finish(1);
 
-// Step 8c: the onboarding plugin.
-plugin.install(m, pluginPlan, report, checkpoint);
+// Step 8c: the repo's Paseo plugins.
+plugins.install(m, pluginPlans, report, checkpoint);
 if (report.errors.length) finish(1);
 
 finish(0);

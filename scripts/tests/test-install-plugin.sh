@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for the onboarding plugin step of install.mjs and uninstall.mjs (#33):
+# Tests for the Paseo plugins step of install.mjs and uninstall.mjs (#33):
 # the daemon call install makes for the plugin's registration, and that
 # uninstall takes back exactly ours, against the stub daemon of
 # lib/cli-stub.mjs, which, like Paseo, registers a plugin before building it

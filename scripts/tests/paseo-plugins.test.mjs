@@ -1,4 +1,4 @@
-// The onboarding plugin step's decision table (lib/onboarding-plugin.mjs,
+// The Paseo plugins step's decision table (lib/paseo-plugins.mjs,
 // #33), called directly: which daemon call each registration needs, and the
 // line that names it. The sandbox cases of test-install-plugin.sh drive the
 // same step end to end.
@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { describeStep, invalidFileEntries, pluginStep, registrationOf } from '../lib/onboarding-plugin.mjs';
+import { describeStep, invalidFileEntries, pluginStep, registrationOf } from '../lib/paseo-plugins.mjs';
 
 const id = 'firstmate-beads-onboarding';
 const copy = '/home/u/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding';
