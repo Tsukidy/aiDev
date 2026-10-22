@@ -67,6 +67,16 @@ check "the operator's own skill is untouched" grep -qx 'description: operator sk
 check "question-guidelines and triage are installed" \
 	bash -c 'test -f "$1/question-guidelines/SKILL.md" && test -f "$1/triage/SKILL.md"' _ "$h/.claude/skills"
 
+# D14 (#45): every skill not listed below starts on its own. The stub skills CLI copies the source tree, so
+# this pins the curated tree's frontmatter as the installed copies carry it.
+user_only="improve-codebase-architecture loop-me setup-ts-deep-modules teach to-questionnaire wait-what writing-beats writing-fragments writing-shape"
+flagged=$(for s in $all_skills; do
+	awk 'NR == 1 { next } /^---$/ { exit } /^disable-model-invocation:/ { found = 1 } END { exit !found }' \
+		"$h/.claude/skills/$s/SKILL.md" && printf '%s\n' "$s"
+done)
+check "exactly the user-only skills carry disable-model-invocation once installed" \
+	test "$flagged" = "$(printf '%s\n' $user_only | LC_ALL=C sort)"
+
 # Agents: the four carried definitions and ten effort agents, by bare name.
 installed_agents=$(cd "$h/.claude/agents" && ls | sed 's/\.md$//' | LC_ALL=C sort)
 check "the agents directory holds exactly the 4 carried and 10 effort agents" test "$installed_agents" = "$expected_agents"
