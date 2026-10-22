@@ -83,6 +83,11 @@ export function onboardingSkipList(ctx) {
 		if (action === 'current') return `${root} is on the beads onboarding skip list ${path} already`;
 		return `${path} already lists ${root} (the operator's entry) — left as is`;
 	};
+	const plan = (m) => {
+		const text = readText(path);
+		const record = ours(m);
+		return { action: skipAction({ text, root, home: ctx.home, recorded: Boolean(record) }), record, text };
+	};
 
 	return {
 		path,
@@ -91,18 +96,17 @@ export function onboardingSkipList(ctx) {
 			if (lexists(path) && readText(path) === null) report.error(`${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`);
 		},
 
-		plan(m) {
-			const text = readText(path);
-			const record = ours(m);
-			return { action: skipAction({ text, root, home: ctx.home, recorded: Boolean(record) }), record, text };
-		},
+		plan,
 
 		describe,
 
-		// Recorded and checkpointed before the list is written, so an
-		// interrupted run leaves no entry uninstall cannot find. Our entry,
-		// deleted since, comes back (as our hook entry does).
-		install(m, { action, record, text }, report, checkpoint) {
+		// Planned again from the list as it is now, so a line the operator
+		// added since the plan read it is kept and counts. Recorded and
+		// checkpointed before the list is written, so an interrupted run
+		// leaves no entry uninstall cannot find. Our entry, deleted since,
+		// comes back (as our hook entry does).
+		install(m, report, checkpoint) {
+			const { action, record, text } = plan(m);
 			report.say(describe({ action }));
 			if (action !== 'add') return;
 			const next = appendEntry(text, root);

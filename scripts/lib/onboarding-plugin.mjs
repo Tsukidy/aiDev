@@ -133,8 +133,8 @@ export function onboardingPlugin(ctx) {
 
 		describe: (plan) => [skip.describe(plan.skip), describeStep(plan.step)],
 
-		install(m, { step, skip: skipPlan, planned, record, buildSha256 }, report, checkpoint) {
-			skip.install(m, skipPlan, report, checkpoint);
+		install(m, { step, planned, record, buildSha256 }, report, checkpoint) {
+			skip.install(m, report, checkpoint);
 			report.say(describeStep(step));
 			if (step.kind === 'foreign') return;
 			// Recorded, and checkpointed, before the daemon is asked: a failed

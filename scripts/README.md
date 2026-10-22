@@ -148,9 +148,10 @@ in the plugin's README.
 By default the install adds this checkout's root (how aiDev carries beads
 under its whitelist `.gitignore` is not decided yet): it creates the file if
 absent, with a two-line comment header, or appends one line to the
-operator's, and records the entry in the manifest before writing it. A list
-that already names this checkout, by any path to it, is the operator's:
-nothing is added and nothing recorded. Our entry, deleted by the operator,
+operator's, and records the entry in the manifest before writing it. It
+reads the list again just before writing, so a line the operator adds
+during the run is kept and counts. A list that already names this checkout,
+by any path to it, is the operator's: nothing is added and nothing recorded. Our entry, deleted by the operator,
 comes back on the next run. Uninstall removes only our line; the operator's
 lines stay byte for byte, and a list the install created and that holds
 nothing else is deleted. Run the install from the checkout Paseo knows as
