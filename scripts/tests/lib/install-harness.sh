@@ -153,12 +153,13 @@ run_in() {
 
 # A copy of this checkout's files, made its own git repository at <dir>/main
 # with a linked worktree of it at <dir>/wt, so a case can run the installer
-# from either, wherever the suite itself runs from. Nonzero when the copy fails.
+# from either, wherever the suite itself runs from. A tracked file deleted in
+# the working tree is left out. Nonzero when the copy fails.
 git_copy_with_worktree() { # git_copy_with_worktree <dir>
 	local dir=$1
 	local git=(env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$dir/main" -c user.name=test -c user.email=test@example.com)
 	mkdir -p "$dir/main" &&
-		(cd "$repo" && git ls-files -z -co --exclude-standard | tar --null -T - -cf -) | tar -C "$dir/main" -xf - &&
+		(cd "$repo" && git ls-files -z -co --exclude-standard | while IFS= read -r -d '' f; do if [ -e "$f" ] || [ -L "$f" ]; then printf '%s\0' "$f"; fi; done | tar --null -T - -cf -) | tar -C "$dir/main" -xf - &&
 		"${git[@]}" init -q && "${git[@]}" add -A && "${git[@]}" commit -qm copy && "${git[@]}" worktree add -q --detach "$dir/wt"
 }
 
