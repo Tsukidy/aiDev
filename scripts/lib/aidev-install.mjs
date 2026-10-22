@@ -31,13 +31,13 @@ import {
 	add,
 	backupItem,
 	backupOf,
+	backupPending,
 	drop,
 	items,
 	ownedFile,
 	ownedFileItem,
 	ownedFiles,
 	partsIn,
-	backupPending,
 	readManifest,
 	recordWrite,
 	serialize,
@@ -276,26 +276,26 @@ export function writeAtomic(p, content, { mode, through = false } = {}) {
 export const writeShared = (p, content) => writeAtomic(p, content, { through: true });
 
 // Read the manifest, settling what a killed run left in flight (#50), in
-// memory only, so a dry run stays read-only. A pending backup whose copy
-// exists was copied; one whose copy does not was never taken, and the write
-// recorded with it, over the operator's file, was never made. Any other
-// recorded write the file holds is what we last wrote; one it does not hold
-// was never made, and a new file never written is not ours.
+// memory only, so a dry run stays read-only. A recorded write was made when
+// the file holds its content and did not before; then it is what we last
+// wrote. Otherwise the record keeps what the file held, and goes when that
+// was nothing, or when the write was over the operator's file and its backup
+// was never copied. A pending backup whose copy exists was copied; one whose
+// copy does not was never taken.
 export function loadManifest(ctx) {
 	const m = readManifest(ctx.manifestPath);
 	if (!m) return m;
+	for (const rec of ownedFiles(m)) {
+		if (rec.next === undefined) continue;
+		const made = fileSha(rec.path) === rec.next && rec.sha256 !== rec.next;
+		const backup = backupOf(m, rec.path);
+		const uncopied = backup?.pending && !existsSync(backup.path);
+		if (!made && (rec.sha256 === null || uncopied)) drop(m, rec);
+		else settleWrite(rec, made);
+	}
 	for (const b of items(m, 'backup', (b) => b.pending)) {
 		if (existsSync(b.path)) settleBackup(b);
-		else {
-			drop(m, b);
-			const rec = ownedFile(m, b.of);
-			if (rec?.next !== undefined) drop(m, rec);
-		}
-	}
-	for (const rec of ownedFiles(m)) {
-		const made = fileSha(rec.path) === rec.next;
-		if (rec.next !== undefined && !made && rec.sha256 === null) drop(m, rec);
-		else settleWrite(rec, made);
+		else drop(m, b);
 	}
 	return m;
 }
@@ -326,9 +326,9 @@ export function worktreeCommonDir() {
 
 // What comes before one in-process write (#50), once the caller has recorded
 // what the write creates: with `backup`, the file's pre-install copy is
-// recorded too, the manifest saved, and the copy made. The orders scripts
-// write captain.md after this; every other write goes through
-// checkpointedWrite.
+// recorded too; then the manifest is saved, and the copy, if any, made. The
+// orders scripts write captain.md after this; every other write goes
+// through checkpointedWrite.
 export function prepareWrite(ctx, m, checkpoint, path, { backup = false, keepLink = false } = {}) {
 	const copy = backup ? recordBackup(ctx, m, path, keepLink) : null;
 	checkpoint();
@@ -376,7 +376,8 @@ export function discardBackup(m, b) {
 // What placing a file whose whole content is ours will do, read from the
 // manifest and the disk without changing either: `action` is `current` (it
 // already holds the content), `write` (absent, or ours and unedited since we
-// wrote it), `replace` (someone else's file: backed up, then replaced, and
+// wrote it, or the operator's file a killed run recorded but never wrote),
+// `replace` (someone else's file: backed up, then replaced, and
 // restored at uninstall) or `kept` (ours, but edited since: left as is);
 // `record` is its manifest item, if any; `bytes` is what it holds afterwards.
 // A plan reads this, and placeOwnedFile acts on the same result.
@@ -434,12 +435,20 @@ export function noteSharedFile(m, path, existedBefore, format) {
 	return rec;
 }
 
-// Write a file we add parts to, once the caller has recorded the new part:
-// the file's record, and its backup when it was there before the install,
-// are recorded with it, through checkpointedWrite.
+// prepareWrite for a file we add parts to, once the caller has recorded the
+// new part: the file's record, and its backup when it was there before the
+// install, are recorded with it. Returns whether it was.
+export function prepareSharedWrite(ctx, m, checkpoint, path, format) {
+	const { existedBefore } = noteSharedFile(m, path, existsSync(path), format);
+	prepareWrite(ctx, m, checkpoint, path, { backup: existedBefore });
+	return existedBefore;
+}
+
+// Write a file we add parts to: prepareSharedWrite, then the write.
 export function placeSharedFile(ctx, m, checkpoint, path, content, format) {
-	const rec = noteSharedFile(m, path, existsSync(path), format);
-	checkpointedWrite(ctx, m, checkpoint, path, { backup: rec.existedBefore }, () => writeShared(path, content));
+	prepareSharedWrite(ctx, m, checkpoint, path, format);
+	writeShared(path, content);
+	testKillPoint(ctx, `written ${tilde(ctx, path)}`);
 	noteSharedFile(m, path, true, format);
 }
 

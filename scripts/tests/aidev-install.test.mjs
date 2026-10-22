@@ -126,6 +126,11 @@ test("...and an edit of their file since is kept, with its backup", () => {
 	assert.equal(readFileSync(copy, 'utf8'), theirs);
 });
 
+test('a write the file holds was made, even when its pending backup has since gone', () => {
+	const { m, path } = loadedAfterKill({ text: ours, sha: sha256(theirs), backup: true, copied: false });
+	assert.deepEqual(m.items, [ownedFileItem({ kind: 'agent', name: 'agent', path, sha256: sha256(ours), existedBefore: true })]);
+});
+
 test('a settled backup whose copy is gone keeps its record', () => {
 	const { m } = loadedAfterKill({ text: ours, sha: sha256(ours), backup: true, copied: false, done: true });
 	assert.deepEqual(kinds(m), ['agent', 'backup']);

@@ -13,6 +13,7 @@ import {
 	jsonLike,
 	lexists,
 	placeOwnedFile,
+	placeSharedFile,
 	readJsonObject,
 	readSkillsLock,
 	readText,
@@ -21,7 +22,6 @@ import {
 	reverseSharedFile,
 	skillsCli,
 	upsertBlock,
-	placeSharedFile,
 } from './aidev-install.mjs';
 import {
 	add,

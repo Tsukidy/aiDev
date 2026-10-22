@@ -104,9 +104,11 @@ reran_as_ours() { # reran_as_ours <label> <sb>
 
 # After each group of writes, at its last write: the agents; the routing hook's
 # files and its settings.json entry; the model sheet; the CLAUDE.md block; the
-# license copies.
-last_agent=$(node -e 'import(process.argv[1]).then((l) => console.log(l.repoAgents().at(-1).name))' "$repo/scripts/lib/aidev-install.mjs")
-for file in ".claude/agents/$last_agent.md" .claude/settings.json .claude/pstack-models.md .claude/CLAUDE.md .local/share/aidev/licenses/LICENSE-repository; do
+# license copies. And inside a group, after its first agent.
+agents=$(node -e 'import(process.argv[1]).then((l) => console.log(l.repoAgents().map((a) => a.name).join(" ")))' "$repo/scripts/lib/aidev-install.mjs")
+first_agent=${agents%% *}
+last_agent=${agents##* }
+for file in ".claude/agents/$first_agent.md" ".claude/agents/$last_agent.md" .claude/settings.json .claude/pstack-models.md .claude/CLAUDE.md .local/share/aidev/licenses/LICENSE-repository; do
 	for kind in plain rich; do
 		interrupted "written ~/$file" "AIDEV_TEST_KILL=written ~/$file" "$kind" reran_as_ours
 	done
@@ -202,14 +204,16 @@ one_line_settings
 # The operator deletes the backups after an install: the next run must not
 # take a fresh "pre-install" copy of captain.md, which holds our blocks now.
 backups_deleted() {
-	local label="backups deleted after an install" sb
+	local label="backups deleted after an install" sb count
 	sb=$(new_sandbox backups-deleted rich)
 	install_in "$sb"
+	count=$(ls "$sb/home/.local/state/aidev/backups" | wc -l)
+	check "$label: the install took backups" test "$count" -gt 0
 	rm -rf "$sb/home/.local/state/aidev/backups"
 	install_in "$sb"
 	check "$label: the re-run exits 0" test $? -eq 0
 	check "$label: the re-run takes no new backup" test ! -e "$sb/home/.local/state/aidev/backups"
-	check "$label: the re-run keeps the backup records" manifest_true "$sb" 'm.items.filter((i) => i.kind === "backup").length === 4'
+	check "$label: the re-run keeps the backup records" manifest_true "$sb" "m.items.filter((i) => i.kind === 'backup').length === $count"
 }
 backups_deleted
 

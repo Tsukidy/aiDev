@@ -31,7 +31,7 @@ import {
 	lexists,
 	markers,
 	noteSharedFile,
-	prepareWrite,
+	prepareSharedWrite,
 	readText,
 	resolveMateHome,
 	run,
@@ -67,11 +67,7 @@ export function ordersStep(ctx) {
 	// upgrade of a block that is not ours marks the record changedByInstall):
 	// then the backup has nothing of the install's to undo, and a change since
 	// a killed run is the operator's.
-	function recordCaptain(m, checkpoint) {
-		const { existedBefore } = noteSharedFile(m, captain, readText(captain) !== null);
-		prepareWrite(ctx, m, checkpoint, captain, { backup: existedBefore });
-		return existedBefore;
-	}
+	const recordCaptain = (m, checkpoint) => prepareSharedWrite(ctx, m, checkpoint, captain, 'text');
 	function settleCaptain(m, existed) {
 		if (partsIn(m, captain).length || sharedFile(m, captain).changedByInstall) return noteSharedFile(m, captain, existed);
 		drop(m, sharedFile(m, captain));
