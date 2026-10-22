@@ -7,11 +7,12 @@
 //
 // Steps (each runtime target owns 2–7; lib/targets.mjs has the contract):
 //   1. preconditions — node ≥ 22.20, npx, bd, paseo on PATH and the Paseo
-//      daemon answering; bun reported (a warning, an error under --strict);
-//      the first mate's home resolvable and its captain.md blocks intact;
-//      every target inside $HOME; the exclude list must not drop a skill
-//      another installed skill's code needs. Any failure exits nonzero
-//      before anything is written.
+//      daemon answering; bun, and a run from a linked git worktree,
+//      reported (a warning, an error under --strict); the first mate's home
+//      resolvable and its captain.md blocks intact; every target inside
+//      $HOME; the exclude list must not drop a skill another installed
+//      skill's code needs. Any failure exits nonzero before anything is
+//      written.
 //   2. the curated skills (skills/ minus the operator's exclude list) through
 //      the skills CLI, user level, per target
 //   3–4. the four carried agents and the ten effort agents of installed skills
@@ -59,6 +60,7 @@ import {
 	run,
 	saveManifest,
 	skillDependencies,
+	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
 import { add, backupOf, beadsDbItem, dirItem, drop, ensure, markedBlockItem, newManifest, sharedFile } from './lib/manifest.mjs';
 import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
@@ -79,14 +81,12 @@ if (!nodeVersionOk()) report.error(`node ${process.versions.node} is too old: th
 for (const tool of ['npx', 'bd', 'paseo']) {
 	if (!findOnPath(tool, ctx.env)) report.error(`${tool} not found on PATH (checked and reported, never installed)`);
 }
+const strictly = (msg) => (flags.strict ? report.error(`${msg} (--strict)`) : report.warn(msg));
 const bun = findOnPath('bun', ctx.env);
 if (bun) report.say(`bun: found at ${bun}`);
-else {
-	const msg =
-		"bun: not found — poteto-mode's PR tooling (scripts watch-pr and ship-pr, which the Shipping and Babysit playbooks run) needs it; install bun yourself";
-	if (flags.strict) report.error(`${msg} (--strict)`);
-	else report.warn(msg);
-}
+else strictly("bun: not found — poteto-mode's PR tooling (scripts watch-pr and ship-pr, which the Shipping and Babysit playbooks run) needs it; install bun yourself");
+const common = worktreeCommonDir();
+if (common) strictly(`${REPO} is a linked git worktree (of ${common}): the beads onboarding skip list would name it, not the main checkout Paseo knows as the project — run the install from the main checkout`);
 
 const mateHome = resolveMateHome(ctx);
 if (!mateHome) report.error(`first mate home not found under ${ctx.paseoHome} — launch the first mate once so its home exists (or set PASEO_HOME)`);

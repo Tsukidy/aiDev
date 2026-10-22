@@ -327,6 +327,7 @@ sb=$(new_sandbox no-bun-strict)
 snap=$(snapshot "$sb/home")
 run_in "$sb" nobun -- "$installer" --strict
 check "a missing bun under --strict exits nonzero" test $? -ne 0
+check "the refusal is the bun error" out_has "$sb" "error: bun: not found"
 check "a missing bun under --strict writes nothing" test "$(snapshot "$sb/home")" = "$snap"
 check "a missing bun under --strict calls no mutating CLI" no_mutating_calls "$sb"
 

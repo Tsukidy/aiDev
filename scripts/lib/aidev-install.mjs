@@ -279,6 +279,15 @@ export function repoCommit() {
 	return r.status === 0 ? r.stdout.trim() : 'unknown';
 }
 
+// The git directory shared by every checkout of the repository when this
+// checkout is a linked worktree of it; null for a main checkout, or no git.
+export function worktreeCommonDir() {
+	const r = spawnSync('git', ['-C', REPO, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], { encoding: 'utf8' });
+	if (r.status !== 0) return null;
+	const [dir, common] = r.stdout.trim().split('\n');
+	return dir === common ? null : common;
+}
+
 // Copy a pre-existing file aside the first time the install modifies it; a
 // later run must not back up our own changes, and must never overwrite a
 // backup an earlier uninstall kept. With `keepLink` (a file we replace

@@ -28,7 +28,8 @@ Paseo) and nothing else from npm.
 ```sh
 node scripts/install.mjs              # install, or converge an existing install
 node scripts/install.mjs --dry-run    # print the plan, write nothing
-node scripts/install.mjs --strict     # also fail when bun is missing
+node scripts/install.mjs --strict     # also fail when bun is missing, or when
+                                      # run from a linked git worktree
 
 node scripts/uninstall.mjs            # reverse what the manifest records
 node scripts/uninstall.mjs --dry-run  # print the plan, touch nothing
@@ -56,7 +57,9 @@ touches nothing.
    (`CLAUDE_CONFIG_DIR`, `PASEO_HOME` and the XDG variables are honored only
    then); `settings.json` parses. `bun` is reported: missing, it is a warning
    naming poteto-mode's `watch-pr` and `ship-pr` (the Shipping and Babysit
-   playbooks), and an error only under `--strict`.
+   playbooks), and an error only under `--strict`. So is a run from a
+   linked git worktree (`git rev-parse --git-dir` differs from
+   `--git-common-dir`): the skip-list entry (below) would name the worktree.
 2. **Skills**: every skill in `skills/` minus the exclude list, through the
    pinned skills CLI, user level, Claude Code only, as copies:
    `npx --yes skills@1.7.4 add <repo>/skills -g -y --copy -a claude-code -s <names…>`.
@@ -156,6 +159,8 @@ comes back on the next run. Uninstall removes only our line; the operator's
 lines stay byte for byte, and a list the install created and that holds
 nothing else is deleted. Run the install from the checkout Paseo knows as
 the project: the entry is the root of the checkout the install runs from.
+From a linked git worktree that root is the worktree, not the base, so the
+install warns, and under `--strict` refuses before anything is written.
 
 ### Every path written
 
