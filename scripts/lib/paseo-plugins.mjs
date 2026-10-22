@@ -31,8 +31,6 @@ import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
 
 const EXTENSIONS_SRC = join(REPO, 'personal-extensions');
 
-// The repo's Paseo plugins, as skills/ is its skills: every directory of
-// personal-extensions/ that holds a paseo-plugin.json, in sorted order.
 export const repoPlugins = () =>
 	readdirSync(EXTENSIONS_SRC)
 		.sort()
@@ -112,7 +110,6 @@ export function pluginsStep(ctx) {
 				const files = bad.length ? [] : listed.map((name) => ({ path: join(copy, name), content: readFileSync(source(name)) }));
 				return { id, dir, copy, files };
 			});
-			// Two directories of one id would share one copy and one registration.
 			for (const [id, same] of Map.groupBy(plugins, (p) => p.id)) {
 				if (same.length > 1) report.error(`plugin id ${id} is declared by more than one paseo-plugin.json: ${same.map((p) => p.dir).join(', ')}`);
 			}

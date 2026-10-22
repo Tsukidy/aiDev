@@ -304,7 +304,6 @@ printf 'not in the files list\n' >"$fixture/README.md"
 two_install() { run_in "$1" full "${@:2}" -- "$two/main/scripts/install.mjs"; } # two_install <sb> [VAR=value ...]
 two_uninstall() { run_in "$1" full -- "$two/main/scripts/uninstall.mjs" --purge --yes; }
 
-# The daemon calls of a run, as plugin_calls prints them.
 first_installed() { printf 'plugin install %s\n' "$(plugin_copy "$1")"; }
 second_installed() { printf 'plugin install %s\n' "$(plugin_copy "$1" "$fixture_id")"; }
 second_reloaded() { printf 'plugin reload %s\n' "$fixture_id"; }
@@ -312,7 +311,6 @@ both_installed() { first_installed "$1" && second_installed "$1"; }
 
 both_running() { plugin_status_is "$1" running && plugin_status_is "$1" running "$fixture_id"; }
 
-# The manifest's plugin items, HOME as ~.
 plugin_records() { # plugin_records <sb>
 	node -e '
 		const [file, home] = process.argv.slice(1);
@@ -321,7 +319,6 @@ plugin_records() { # plugin_records <sb>
 	' "$(manifest_of "$1")" "$1/home"
 }
 
-# The skip-list line and each plugin's line, in the order printed.
 step_order() { # step_order <sb>
 	grep -oE "to the beads onboarding skip list|plugin ($plugin_id|$fixture_id): copy to" "$1/out.txt"
 }
@@ -363,9 +360,6 @@ check "install → re-run → uninstall with two plugins restores the snapshot" 
 
 # killed_at_second <label> <VAR=value> <calls before the kill> <the re-run's calls>
 # Each calls argument names one of the functions above, given the sandbox.
-# Uninstall right after restores the snapshot; a re-run makes the second
-# plugin's call, records what an uninterrupted install does, and the run after
-# it makes no call; uninstall then restores the snapshot too.
 killed_at_second() {
 	local label=$1 kill=$2 at_kill=$3 rerun_calls=$4 slug=${1//[^A-Za-z0-9-]/-} sb before status
 	for run in uninstall rerun; do
@@ -398,9 +392,7 @@ killed_at_second() {
 	done
 }
 
-# The daemon has installed the second plugin; its build is not recorded yet.
 killed_at_second "killed at the second plugin's install" "STUB_INTERRUPT=paseo-install:$fixture_id" both_installed second_reloaded
-# The second plugin is recorded and saved, its copy not yet written, the daemon not yet asked.
 killed_at_second "killed once the second plugin is recorded" "AIDEV_TEST_KILL=record ~/.local/share/aidev/paseo-plugins/$fixture_id/index.server.ts" \
 	first_installed second_installed
 
