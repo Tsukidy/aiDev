@@ -184,34 +184,15 @@ uninstall_in "$sb" --purge --yes
 check "uninstall removes our entry all the same" test ! -e "$(skip_list_of "$sb")"
 check "and leaves the registration from elsewhere running" plugin_status_is "$sb" running
 
-# --- run from a linked git worktree: a warning, an error under --strict ----------------------
+# --- run from a linked git worktree ------------------------------------------------------------
 #
-# The entry names the checkout the install runs from, and a worktree is not
-# the base Paseo knows as the project. A copy of this checkout, made its own
-# git repository with a linked worktree, runs the installer from each, wherever
-# this suite runs from.
+# The entry names the checkout the install runs from (test-install.sh has the
+# warning and the --strict refusal).
 
-gitcopy=$tmp/gitcopy
-mkdir -p "$gitcopy/main"
-(cd "$repo" && git ls-files -z -co --exclude-standard | tar --null -T - --ignore-failed-read -cf - 2>/dev/null) | tar -C "$gitcopy/main" -xf -
-copy_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$gitcopy/main" -c user.name=test -c user.email=test@example.com "$@"; }
-copy_git init -q && copy_git add -A && copy_git commit -qm copy && copy_git worktree add -q --detach "$gitcopy/wt"
-
+check "a git copy of this checkout with a linked worktree is made" git_copy_with_worktree "$tmp/gitcopy"
 sb=$(new_sandbox skip-worktree)
-run_in "$sb" full -- "$gitcopy/wt/scripts/install.mjs"
-check "install from a linked worktree exits 0" test $? -eq 0
-check "it warns that the skip list would name the worktree" out_has "$sb" "warning: $gitcopy/wt is a linked git worktree"
-check "the entry is the worktree's root" test "$(entries "$sb")" = "$gitcopy/wt"
-sb=$(new_sandbox skip-worktree-strict)
-before=$(snapshot "$sb/home")
-run_in "$sb" full -- "$gitcopy/wt/scripts/install.mjs" --strict
-check "install --strict from a linked worktree exits nonzero" test $? -ne 0
-check "the refusal is the worktree error" out_has "$sb" "error: $gitcopy/wt is a linked git worktree"
-check "the refusal writes nothing" test "$(snapshot "$sb/home")" = "$before"
-sb=$(new_sandbox skip-main-strict)
-run_in "$sb" full -- "$gitcopy/main/scripts/install.mjs" --strict
-check "install --strict from the main checkout exits 0" test $? -eq 0
-check "with no worktree warning" not out_has "$sb" "linked git worktree"
+run_in "$sb" full -- "$tmp/gitcopy/wt/scripts/install.mjs"
+check "the entry of an install from a linked worktree is the worktree's root" test "$(entries "$sb")" = "$tmp/gitcopy/wt"
 
 # --- the list is read again when it is written -------------------------------------------------
 #
