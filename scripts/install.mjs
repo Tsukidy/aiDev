@@ -30,8 +30,9 @@
 // Re-running converges: after a partial failure, after a repo update, and
 // after the exclude list changes (what is no longer wanted comes back out).
 // What an external call (the skills CLI, an orders script, the daemon) may
-// create is recorded, and the manifest saved, before the call (#35), so a run
-// killed at any of them leaves a manifest a re-run and uninstall go by.
+// create is recorded, and the manifest saved, before the call (#35), and so
+// is each of the installer's own file writes (#50), so a run killed at any of
+// them leaves a manifest a re-run and uninstall go by.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -156,8 +157,9 @@ if (flags['dry-run']) {
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
 // Save the manifest, naming every directory the install may create, before
-// each external call, so an interrupted run leaves nothing uninstall cannot
-// find. finish() drops the directories that were never created.
+// each external call and each of the installer's own writes, so an
+// interrupted run leaves nothing uninstall cannot find. finish() drops the
+// directories that were never created.
 const checkpoint = () => {
 	for (const d of watched) ensure(m, dirItem(d), (i) => i.path === d);
 	saveManifest(ctx, m);
@@ -177,7 +179,7 @@ if (report.errors.length) finish(1);
 
 // Attribution travels with the install: NOTICE, the provenance manifest and
 // every license file of the tree, plus the repository's own license.
-for (const f of licenseFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src) });
+for (const f of licenseFiles) placeOwnedFile(ctx, m, report, checkpoint, { path: f.dest, content: readFileSync(f.src) });
 
 // Step 8a: the orders installers.
 orders.install(m, report, checkpoint);

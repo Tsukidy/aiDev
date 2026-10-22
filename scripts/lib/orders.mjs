@@ -20,18 +20,18 @@
 // recorded before the script runs, and settled after it, the block with the
 // text the script put in front of it, so uninstall removes exactly that.
 
-import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	ONBOARDING_PLUGIN_DIR,
 	REPO,
-	backupOnce,
 	blockBefore,
 	blockRange,
 	countLines,
+	discardBackup,
 	lexists,
 	markers,
 	noteSharedFile,
+	prepareSharedWrite,
 	readText,
 	resolveMateHome,
 	run,
@@ -67,20 +67,12 @@ export function ordersStep(ctx) {
 	// upgrade of a block that is not ours marks the record changedByInstall):
 	// then the backup has nothing of the install's to undo, and a change since
 	// a killed run is the operator's.
-	function recordCaptain(m) {
-		const existed = sharedFile(m, captain)?.existedBefore ?? readText(captain) !== null;
-		if (existed) backupOnce(ctx, m, captain);
-		noteSharedFile(m, captain, existed);
-		return existed;
-	}
+	const recordCaptain = (m, checkpoint) => prepareSharedWrite(ctx, m, checkpoint, captain, 'text');
 	function settleCaptain(m, existed) {
 		if (partsIn(m, captain).length || sharedFile(m, captain).changedByInstall) return noteSharedFile(m, captain, existed);
 		drop(m, sharedFile(m, captain));
 		const b = backupOf(m, captain);
-		if (b) {
-			rmSync(b.path, { force: true });
-			drop(m, b);
-		}
+		if (b) discardBackup(m, b);
 	}
 
 	return {
@@ -110,7 +102,7 @@ export function ordersStep(ctx) {
 		describe: () => ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
 
 		install(m, report, checkpoint) {
-			const existed = recordCaptain(m);
+			const existed = recordCaptain(m, checkpoint);
 			for (const o of ORDERS) {
 				const pre = readText(captain) ?? '';
 				const ours = ourBlock(m, o.block);

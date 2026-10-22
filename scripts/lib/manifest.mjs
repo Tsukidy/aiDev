@@ -29,6 +29,12 @@
 //   skills-lock   the skills CLI's lock (existedBefore)
 //
 // `existedBefore` on a file says whether it was there before the install.
+// Each in-process write is recorded before it is made (#50). An agent or a
+// file whose whole content is ours then carries `next`, the sha256 the write
+// leaves, beside `sha256`, what we wrote before it (for a new record, what
+// the file held: the operator's, or null); recordWrite and settleWrite below
+// change the two. A backup is recorded `pending` before its copy is made,
+// with the sha256 of the file it copies; settleBackup clears it.
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -41,7 +47,11 @@ import { basename, dirname } from 'node:path';
 // since #35, which lets a marked-block be an intent (at, no before): a
 // version 3 needs no upgrade, and an older checkout's uninstall would strip
 // an unsettled block without the text it was appended after, so it refuses a 4.
-export const SCHEMA_VERSION = 4;
+// 5 since #50, which records a write before it is made (next on a file, and
+// pending on a backup): a version 4 needs no upgrade, and an older
+// checkout's uninstall would misread a record that has not settled, so it
+// refuses a 5.
+export const SCHEMA_VERSION = 5;
 export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'skip-entry', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {
@@ -108,6 +118,16 @@ export const replace = (m, old, item) => {
 	m.items[i] = item;
 	return item;
 };
+// The write about to be made to a file whose whole content is ours (#50)...
+export const recordWrite = (item, sha256) => {
+	item.next = sha256;
+};
+// ...and, once it is made or known never to have been, its record settled.
+export const settleWrite = (item, made) => {
+	if (item.next === undefined) return;
+	if (made) item.sha256 = item.next;
+	delete item.next;
+};
 
 // --- item constructors ----------------------------------------------------------------
 
@@ -132,6 +152,10 @@ export const markedBlockIntent = (path, id, text) => ({
 export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
 export const skipEntryItem = (path, entry, existedBefore, before) => ({ kind: 'skip-entry', path, entry, existedBefore, before });
 export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });
+export const backupPending = (of, path, sha256) => ({ ...backupItem(of, path, sha256), pending: true });
+export const settleBackup = (item) => {
+	delete item.pending;
+};
 export const dirItem = (path) => ({ kind: 'dir', path });
 export const beadsDbItem = (path) => ({ kind: 'beads-db', path });
 export const skillsLockItem = (path, existedBefore) => ({ kind: 'skills-lock', path, existedBefore });

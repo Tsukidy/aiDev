@@ -124,7 +124,7 @@ install_in "$sb"
 check "a re-run over a version-2 manifest exits 0" test $? -eq 0
 check "it adds this checkout to the skip list" test "$(entries "$sb")" = "$repo"
 check "it records the entry" recorded "$sb"
-check "it saves the manifest as version 4" manifest_true "$sb" 'm.schemaVersion === 4'
+check "it saves the manifest as version 5" manifest_true "$sb" 'm.schemaVersion === 5'
 uninstall_in "$sb" --purge --yes
 check "uninstall after that restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 

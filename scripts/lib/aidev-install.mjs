@@ -31,13 +31,18 @@ import {
 	add,
 	backupItem,
 	backupOf,
+	backupPending,
 	drop,
 	items,
 	ownedFile,
 	ownedFileItem,
+	ownedFiles,
 	partsIn,
 	readManifest,
+	recordWrite,
 	serialize,
+	settleBackup,
+	settleWrite,
 	sharedFile,
 	sharedFileItem,
 } from './manifest.mjs';
@@ -85,6 +90,15 @@ export function parseFlags(argv, known, tool) {
 	}
 	return flags;
 }
+
+// A kill point of the installer tests (#50): with AIDEV_TEST_KILL naming the
+// point, which nothing but those tests sets, the process SIGKILLs itself there.
+function testKillPoint(ctx, point) {
+	if (ctx.env.AIDEV_TEST_KILL === point) process.kill(process.pid, 'SIGKILL');
+}
+
+// A path under HOME as ~/…, as a kill point names it.
+const tilde = (ctx, p) => `~/${relative(ctx.home, p)}`;
 
 // --- paths ----------------------------------------------------------------------------
 
@@ -261,7 +275,30 @@ export function writeAtomic(p, content, { mode, through = false } = {}) {
 // Write a file we only add parts to: through symlinks, keeping its mode.
 export const writeShared = (p, content) => writeAtomic(p, content, { through: true });
 
-export const loadManifest = (ctx) => readManifest(ctx.manifestPath);
+// Read the manifest, settling what a killed run left in flight (#50), in
+// memory only, so a dry run stays read-only. A recorded write was made when
+// the file holds its content and did not before; then it is what we last
+// wrote. Otherwise the record keeps what the file held, and goes when that
+// was nothing, or when the write was over the operator's file and its backup
+// was never copied. A pending backup whose copy exists was copied; one whose
+// copy does not was never taken.
+export function loadManifest(ctx) {
+	const m = readManifest(ctx.manifestPath);
+	if (!m) return m;
+	for (const rec of ownedFiles(m)) {
+		if (rec.next === undefined) continue;
+		const made = fileSha(rec.path) === rec.next && rec.sha256 !== rec.next;
+		const backup = backupOf(m, rec.path);
+		const uncopied = backup?.pending && !existsSync(backup.path);
+		if (!made && (rec.sha256 === null || uncopied)) drop(m, rec);
+		else settleWrite(rec, made);
+	}
+	for (const b of items(m, 'backup', (b) => b.pending)) {
+		if (existsSync(b.path)) settleBackup(b);
+		else drop(m, b);
+	}
+	return m;
+}
 
 // Written only when it changed, so an install that changes nothing leaves the
 // manifest byte-identical.
@@ -287,31 +324,60 @@ export function worktreeCommonDir() {
 	return dir === common ? null : common;
 }
 
-// Copy a pre-existing file aside the first time the install modifies it; a
-// later run must not back up our own changes, and must never overwrite a
+// What comes before one in-process write (#50), once the caller has recorded
+// what the write creates: with `backup`, the file's pre-install copy is
+// recorded too; then the manifest is saved, and the copy, if any, made. The
+// orders scripts write captain.md after this; every other write goes
+// through checkpointedWrite.
+export function prepareWrite(ctx, m, checkpoint, path, { backup = false, keepLink = false } = {}) {
+	const copy = backup ? recordBackup(ctx, m, path, keepLink) : null;
+	checkpoint();
+	testKillPoint(ctx, `record ${tilde(ctx, path)}`);
+	if (!copy) return;
+	mkdirSync(dirname(copy.path), { recursive: true });
+	copyFileSync(path, `${copy.path}.aidev-tmp`);
+	renameSync(`${copy.path}.aidev-tmp`, copy.path);
+	settleBackup(copy);
+	testKillPoint(ctx, `copied ${tilde(ctx, path)}`);
+}
+
+// One in-process write: prepareWrite, then `write`.
+export function checkpointedWrite(ctx, m, checkpoint, path, options, write) {
+	prepareWrite(ctx, m, checkpoint, path, options);
+	write();
+	testKillPoint(ctx, `written ${tilde(ctx, path)}`);
+}
+
+// Record a pre-existing file's copy the first time the install modifies it;
+// a later run must not back up our own changes, and must never overwrite a
 // backup an earlier uninstall kept. With `keepLink` (a file we replace
 // whole), a symlink is recorded as the link itself, so uninstall puts the
-// link back instead of a copy.
-export function backupOnce(ctx, m, path, { keepLink = false } = {}) {
-	if (!lexists(path) || backupOf(m, path)) return;
+// link back instead of a copy. Returns the backup still to be copied, or null.
+function recordBackup(ctx, m, path, keepLink) {
+	if (!lexists(path) || backupOf(m, path)) return null;
 	if (keepLink && lstatSync(path).isSymbolicLink()) {
 		add(m, { ...backupItem(path, path, null), link: readlinkSync(path) });
-		return;
+		return null;
 	}
-	if (!existsSync(path)) return;
-	mkdirSync(ctx.backupsDir, { recursive: true });
+	if (!existsSync(path)) return null;
 	let n = items(m, 'backup').length + 1;
 	let dest;
 	do dest = join(ctx.backupsDir, `${String(n++).padStart(3, '0')}-${basename(path)}`);
 	while (existsSync(dest));
-	copyFileSync(path, dest);
-	add(m, backupItem(path, dest, fileSha(dest)));
+	return add(m, backupPending(path, dest, fileSha(path)));
+}
+
+// Delete a backup's copy and its record.
+export function discardBackup(m, b) {
+	if (!b.link) rmSync(b.path, { force: true });
+	drop(m, b);
 }
 
 // What placing a file whose whole content is ours will do, read from the
 // manifest and the disk without changing either: `action` is `current` (it
 // already holds the content), `write` (absent, or ours and unedited since we
-// wrote it), `replace` (someone else's file: backed up, then replaced, and
+// wrote it, or the operator's file a killed run recorded but never wrote),
+// `replace` (someone else's file: backed up, then replaced, and
 // restored at uninstall) or `kept` (ours, but edited since: left as is);
 // `record` is its manifest item, if any; `bytes` is what it holds afterwards.
 // A plan reads this, and placeOwnedFile acts on the same result.
@@ -327,19 +393,19 @@ export function ownedFileAction(m, { path, content }) {
 
 // Place a file whose whole content is ours (an agent, a hook file, the sheet,
 // a license copy, the plugin's copy), as ownedFileAction says (or said, when
-// the caller planned with it).
-export function placeOwnedFile(ctx, m, report, { kind = 'file', name, path, content, mode }, planned = ownedFileAction(m, { path, content })) {
+// the caller planned with it), through checkpointedWrite. A new record
+// starts at what the file holds, so until the write settles it, a reader
+// takes the file as it was: the operator's, backed up, or nothing.
+export function placeOwnedFile(ctx, m, report, checkpoint, { kind = 'file', name, path, content, mode }, planned = ownedFileAction(m, { path, content })) {
 	const { action, record, bytes } = planned;
 	const want = sha256(content);
 	if (action === 'kept' && sha256(bytes) !== want) report.warn(`${path} was modified since install — left as is`);
 	if (action === 'kept' || action === 'current') return;
-	if (action === 'replace') {
-		backupOnce(ctx, m, path, { keepLink: true });
-		report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
-	}
-	writeAtomic(path, content, { mode });
-	if (record) record.sha256 = want;
-	else add(m, ownedFileItem({ kind, name, path, sha256: want, existedBefore: action === 'replace' }));
+	const rec = record ?? add(m, ownedFileItem({ kind, name, path, sha256: fileSha(path), existedBefore: action === 'replace' }));
+	recordWrite(rec, want);
+	if (action === 'replace') report.say(`${path} already existed — backed up and replaced; uninstall restores it`);
+	checkpointedWrite(ctx, m, checkpoint, path, { backup: action === 'replace', keepLink: true }, () => writeAtomic(path, content, { mode }));
+	settleWrite(rec, true);
 }
 
 // Take back a file placed by placeOwnedFile: delete it while it still holds
@@ -356,11 +422,8 @@ export function reverseOwnedFile(m, item) {
 	}
 	if (cur !== null) rmSync(item.path, { force: true });
 	if (b?.link) symlinkSync(b.link, item.path);
-	else if (b && existsSync(b.path)) {
-		writeAtomic(item.path, readFileSync(b.path), { mode: statSync(b.path).mode & 0o7777 });
-		rmSync(b.path, { force: true });
-	}
-	if (b) drop(m, b);
+	else if (b && existsSync(b.path)) writeAtomic(item.path, readFileSync(b.path), { mode: statSync(b.path).mode & 0o7777 });
+	if (b) discardBackup(m, b);
 	return null;
 }
 
@@ -369,6 +432,24 @@ export function reverseOwnedFile(m, item) {
 export function noteSharedFile(m, path, existedBefore, format) {
 	const rec = sharedFile(m, path) ?? add(m, sharedFileItem(path, existedBefore, format));
 	rec.sha256 = fileSha(path);
+	return rec;
+}
+
+// prepareWrite for a file we add parts to, once the caller has recorded the
+// new part: the file's record, and its backup when it was there before the
+// install, are recorded with it. Returns whether it was.
+export function prepareSharedWrite(ctx, m, checkpoint, path, format) {
+	const { existedBefore } = noteSharedFile(m, path, existsSync(path), format);
+	prepareWrite(ctx, m, checkpoint, path, { backup: existedBefore });
+	return existedBefore;
+}
+
+// Write a file we add parts to: prepareSharedWrite, then the write.
+export function placeSharedFile(ctx, m, checkpoint, path, content, format) {
+	prepareSharedWrite(ctx, m, checkpoint, path, format);
+	writeShared(path, content);
+	testKillPoint(ctx, `written ${tilde(ctx, path)}`);
+	noteSharedFile(m, path, true, format);
 }
 
 // How each shared-file format is read, stripped of one of our parts,
@@ -415,8 +496,7 @@ export function reverseSharedFile(m, path, stripHook) {
 		rmSync(path, { force: true });
 		return null;
 	}
-	const result = codec.render(v, text);
-	if (result !== text) writeShared(path, result);
+	if (!codec.same(codec.parse(text), v)) writeShared(path, codec.render(v, text));
 	return b ? `${b.path} (pre-install copy of ${path}, which changed since install; only our parts were removed)` : null;
 }
 
@@ -458,16 +538,17 @@ export function blockRange(text, id) {
 }
 
 // Insert a marked block at the end of `text` (null = no file yet), or replace
-// the body of the one already there. Returns the new text and the separator
-// put in front of an appended block (uninstall removes it with the block).
+// the body of the one already there. Returns the new text, whether the block
+// was appended, and the separator put in front of an appended block
+// (uninstall removes it with the block).
 export function upsertBlock(text, id, body) {
 	const [s, e] = markers(id);
 	const block = `${s}\n${body}${e}\n`;
 	const range = text === null ? null : blockRange(text, id);
-	if (range) return { text: text.slice(0, range[0]) + block + text.slice(range[1]), before: '' };
-	if (!text) return { text: block, before: '' };
+	if (range) return { text: text.slice(0, range[0]) + block + text.slice(range[1]), before: '', appended: false };
+	if (!text) return { text: block, before: '', appended: true };
 	const before = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
-	return { text: text + before + block, before };
+	return { text: text + before + block, before, appended: true };
 }
 
 // The text the install put in front of a marked block, from its manifest
