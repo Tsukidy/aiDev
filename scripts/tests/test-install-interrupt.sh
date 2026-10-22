@@ -220,4 +220,76 @@ foreign_blocks() {
 }
 foreign_blocks
 
+# ...and an edit between the kill and the re-run is the operator's: the re-run
+# still drops the record and the backup, which uninstall would only report.
+foreign_blocks_edited() {
+	local label="both blocks already there, not ours: an edit after a bd-ready kill" ref sb status
+	ref=$(new_sandbox ref-foreign-edited)
+	install_in "$ref"
+	sb=$(new_sandbox foreign-edited)
+	cp "$(captain_of "$ref")" "$(captain_of "$sb")"
+	interrupt "$sb" bd-ready
+	printf 'OPERATOR: never deploy on Fridays.\n' >>"$(captain_of "$sb")"
+	install_in "$sb"
+	status=$?
+	check "$label: the re-run exits 0" test "$status" -eq 0
+	check "$label: the re-run records nothing for captain.md" manifest_true "$sb" '!m.items.some((i) => (i.path ?? i.of).endsWith("/captain.md"))'
+	check "$label: the re-run removed the backup" test -z "$(ls "$sb/home/.local/state/aidev/backups" 2>/dev/null)"
+}
+foreign_blocks_edited
+
+# --- a kill inside the standing-orders script, on a captain.md it creates ----------
+#
+# From a git copy of this checkout whose standing-orders script kills the
+# install (and itself) either right after writing the header to the
+# captain.md it creates, or before writing anything. The re-run runs the
+# script unchanged.
+
+kill_copy=$tmp/kill-copy
+git_copy_with_worktree "$kill_copy" || printf 'FAIL the checkout copies for the kill cases\n'
+kill_script=$kill_copy/main/scripts/install-standing-orders.sh
+cp "$kill_script" "$tmp/standing-orders.orig"
+
+# killed_in_standing_orders <case> <after-header|before-header> <captain.md text written after the kill, or "">
+# Prints nothing; leaves the sandbox at <sb>, re-run and uninstalled.
+killed_in_standing_orders() {
+	local name=$1 when=$2 text=$3 sb
+	sb=$(new_sandbox "$name")
+	cp "$tmp/standing-orders.orig" "$kill_script"
+	if [ "$when" = after-header ]; then
+		sed -i "s|^\tprintf 'created %s\\\\n' \"\$target\"|&\n\tkill -9 \$PPID \$\$|" "$kill_script"
+	else
+		sed -i 's|^target="\$home/data/captain.md"|kill -9 $PPID $$\n&|' "$kill_script"
+	fi
+	snapshot "$sb/home" >"$sb/before.txt"
+	(run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs") 2>/dev/null
+	printf '%s' "$?" >"$sb/killed.txt"
+	cp "$tmp/standing-orders.orig" "$kill_script"
+	[ -n "$text" ] && printf '%s' "$text" >>"$(captain_of "$sb")"
+	run_in "$sb" full -- "$kill_copy/main/scripts/install.mjs"
+	printf '%s' "$?" >"$sb/rerun.txt"
+	run_in "$sb" full -- "$kill_copy/main/scripts/uninstall.mjs" --purge --yes
+	printf '%s' "$?" >"$sb/uninstall.txt"
+	printf '%s\n' "$sb"
+}
+
+sb=$(killed_in_standing_orders kill-header after-header "")
+label="a kill after the standing-orders header"
+check "$label: the install was killed, the header written" test "$(cat "$sb/killed.txt")" -ne 0
+check "$label: the re-run and uninstall exit 0" test "$(cat "$sb/rerun.txt")$(cat "$sb/uninstall.txt")" = 00
+check "$label: uninstall takes the header with the block, restoring the snapshot" test "$(snapshot "$sb/home")" = "$(cat "$sb/before.txt")"
+
+sb=$(killed_in_standing_orders kill-header-edited after-header $'OPERATOR: never deploy on Fridays.\n')
+label="an operator line after a kill after the standing-orders header"
+check "$label: the re-run and uninstall exit 0" test "$(cat "$sb/rerun.txt")$(cat "$sb/uninstall.txt")" = 00
+check "$label: uninstall keeps the header and the line" test "$(cat "$(captain_of "$sb")")" = "$(printf '# Standing orders\n\nOPERATOR: never deploy on Fridays.')"
+
+# firstmate seeds captain.md from its template whenever the mate launches.
+seeded=$'# Captain\'s standing orders\n\nOPERATOR: never deploy on Fridays.\n'
+sb=$(killed_in_standing_orders kill-before-header before-header "$seeded")
+label="a captain.md seeded after a kill before the standing-orders header"
+check "$label: the install was killed, no captain.md written" test "$(cat "$sb/killed.txt")" -ne 0
+check "$label: the re-run and uninstall exit 0" test "$(cat "$sb/rerun.txt")$(cat "$sb/uninstall.txt")" = 00
+check "$label: uninstall leaves the seeded file as it was" test "$(cat "$(captain_of "$sb")")" = "$(printf '%s' "$seeded")"
+
 summary

@@ -1,8 +1,8 @@
 // The orders step of install (8a): the two orders installers, each appending
 // its own marked block to the first mate's data/captain.md, the beads one
-// also creating the mate's home memory database. Shaped like the onboarding
-// plugin step (onboarding-plugin.mjs): runtime-neutral, outside the target
-// registry, and with nothing to reverse of its own, since uninstall strips
+// also creating the mate's home memory database. A subset of the onboarding
+// plugin step's contract (onboarding-plugin.mjs): runtime-neutral, outside the
+// target registry, no plan, and nothing to reverse of its own, since uninstall strips
 // the recorded blocks and removes the recorded beads-db paths itself:
 //
 //   preconditions(report)  the mate home resolvable; captain.md's blocks
@@ -28,7 +28,6 @@ import {
 	blockBefore,
 	blockRange,
 	countLines,
-	fileSha,
 	lexists,
 	markers,
 	noteSharedFile,
@@ -42,15 +41,17 @@ import { add, backupOf, beadsDbItem, drop, ensure, first, items, markedBlockInte
 // (docs/research/beads-cli-memory-surface.md A2): its store, a gate lock, and
 // a git repository.
 const BEADS_CREATED_NAMES = ['.beads', '.beads.gate.lock', '.git'];
+// What both scripts write first to a captain.md they create.
+const HEADER = '# Standing orders\n\n';
 
-// Each script, the block it appends, and what else its call may create in the
-// mate home: the beads installer runs bd init when .beads is absent.
+// Each script, the block it appends, and the beads database its call may
+// create in the mate home: the beads installer runs bd init when .beads is absent.
 const ORDERS = [
-	{ script: join(REPO, 'scripts', 'install-standing-orders.sh'), block: 'aidev-standing-orders', creates: () => [] },
+	{ script: join(REPO, 'scripts', 'install-standing-orders.sh'), block: 'aidev-standing-orders', beadsDb: () => [] },
 	{
 		script: join(ONBOARDING_PLUGIN_DIR, 'install-captain-orders.sh'),
 		block: 'paseo-beads-onboarding',
-		creates: (home) => (lexists(join(home, '.beads')) ? [] : BEADS_CREATED_NAMES.map((n) => join(home, n))),
+		beadsDb: (home) => (lexists(join(home, '.beads')) ? [] : BEADS_CREATED_NAMES.map((n) => join(home, n))),
 	},
 ];
 
@@ -62,20 +63,19 @@ export function ordersStep(ctx) {
 
 	// captain.md's shared record and backup, written before the first script
 	// so a killed run leaves them, and taken back after when nothing of ours
-	// is recorded in the file and it is as the backup holds it (absent, with
-	// no backup): neither this run nor a killed one before it had anything to
-	// add, and uninstall would have nothing to strip.
+	// is recorded in the file and this run's scripts left it as they found
+	// it: uninstall would have nothing to strip, and a change since a killed
+	// run (the operator's) is not one the backup should undo.
 	function recordCaptain(m) {
 		const existed = sharedFile(m, captain)?.existedBefore ?? captainText !== null;
 		if (existed) backupOnce(ctx, m, captain);
 		noteSharedFile(m, captain, existed);
 		return existed;
 	}
-	function settleCaptain(m, existed) {
-		const b = backupOf(m, captain);
-		const asBefore = b ? fileSha(captain) === b.sha256 : readText(captain) === null;
-		if (partsIn(m, captain).length || !asBefore) return noteSharedFile(m, captain, existed);
+	function settleCaptain(m, existed, found) {
+		if (partsIn(m, captain).length || readText(captain) !== found) return noteSharedFile(m, captain, existed);
 		drop(m, sharedFile(m, captain));
+		const b = backupOf(m, captain);
 		if (b) {
 			rmSync(b.path, { force: true });
 			drop(m, b);
@@ -110,6 +110,7 @@ export function ordersStep(ctx) {
 
 		install(m, report, checkpoint) {
 			const existed = recordCaptain(m);
+			const found = readText(captain);
 			for (const o of ORDERS) {
 				const pre = readText(captain) ?? '';
 				const ours = ourBlock(m, o.block);
@@ -117,12 +118,13 @@ export function ordersStep(ctx) {
 					// An intent a killed run left is anchored again at what the file
 					// holds now: what came in since (the operator's line, an upgrade of
 					// the block before) is not the script's to be removed with its
-					// block. One anchored at an empty file the install created stays:
-					// what precedes the block then is the header the script wrote.
+					// block. One anchored at an empty file the install created stays
+					// while the file holds no more than the header, the script's own.
+					const keepAnchor = ours?.at?.length === 0 && !existed && (pre === '' || pre === HEADER);
 					if (!ours) add(m, markedBlockIntent(captain, o.block, pre));
-					else if (ours.at && !(ours.at.length === 0 && !existed)) replace(m, ours, markedBlockIntent(captain, o.block, pre));
+					else if (ours.at && !keepAnchor) replace(m, ours, markedBlockIntent(captain, o.block, pre));
 				}
-				for (const p of o.creates(mateHome)) if (!lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
+				for (const p of o.beadsDb(mateHome)) if (!lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
 				checkpoint();
 				const r = run(ctx, 'bash', [o.script]);
 				const post = readText(captain) ?? '';
@@ -137,7 +139,7 @@ export function ordersStep(ctx) {
 					break;
 				}
 			}
-			settleCaptain(m, existed);
+			settleCaptain(m, existed, found);
 		},
 	};
 }
