@@ -60,8 +60,9 @@ touches nothing.
    refused, though the exclude list there is only read. `bun` is reported:
    missing, it is a warning naming poteto-mode's `watch-pr` and `ship-pr`
    (the Shipping and Babysit playbooks), and an error only under `--strict`.
-   So is a run from a linked git worktree (`git rev-parse --git-dir` differs
-   from `--git-common-dir`): the skip-list entry (below) would name the
+   A run from a linked git worktree (`git rev-parse --git-dir` differs from
+   `--git-common-dir`) is reported the same way, a warning and an error only
+   under `--strict`, because the skip-list entry (below) would name the
    worktree.
 2. **Skills**: every skill in `skills/` minus the exclude list, through the
    pinned skills CLI, user level, Claude Code only, as copies:
@@ -145,29 +146,37 @@ excluded skill only warns. A name that is not a skill warns.
 `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip`, operator-owned:
 the project bases the onboarding plugin never initializes. One absolute or
 `~/` path per line; a `#` at the start of a line or after whitespace starts a
-comment, so a `#` inside a path is part of the path. The plugin reads it on
-every `workspace.created` event and compares real paths, so a symlinked path
+comment, so a `#` inside a path is part of the path. Before #37 a line like
+`/srv/proj#note` meant `/srv/proj`; it now names a path that contains `#`, so
+rewrite such a line as `/srv/proj #note`. The plugin reads the list on every
+`workspace.created` event and compares real paths, so a symlinked path
 matches. A listed project is skipped with a log line, and becomes eligible
 again on its next workspace event once its line is gone. The full rules are
 in the plugin's README.
 
 By default the install adds this checkout's root (how aiDev carries beads
-under its whitelist `.gitignore` is not decided yet): it creates the file if
-absent, with a two-line comment header, or appends one line to the
-operator's, and records the entry in the manifest before writing it. It
-reads the list again just before writing, so a line the operator adds
-during the run is kept and counts. A list that already names this checkout,
-by any path to it, is the operator's: nothing is added and nothing recorded.
-Our entry, deleted by the operator, comes back on the next run. Uninstall
-removes only our line; the operator's lines stay byte for byte, and a list
-the install created and that holds nothing else is deleted. Uninstall
-removes our line even when the plugin of that id is registered from
-elsewhere (not ours, so uninstall leaves it running): that plugin may then
-onboard this checkout on its next workspace event, unless the operator lists
-it. Run the install from the checkout Paseo knows as the project: the entry
-is the root of the checkout the install runs from. From a linked git
-worktree that root is the worktree, not the base, so the install warns, and
-under `--strict` refuses before anything is written.
+under its whitelist `.gitignore` is not decided yet):
+
+- The install creates the file if absent, with a two-line comment header, or
+  appends one line to the operator's, and records the entry in the manifest
+  before writing it.
+- It reads the list again just before writing, so a line the operator adds
+  during the run is kept and counts. A list that can no longer be read then
+  stops the install with an error: nothing is written or recorded, and the
+  plugin is not registered.
+- A list that already names this checkout, by any path to it, is the
+  operator's: nothing is added and nothing recorded.
+- Our entry, deleted by the operator, comes back on the next run.
+- Uninstall removes only our line. The operator's lines stay byte for byte,
+  and a list the install created and that holds nothing else is deleted.
+- Uninstall removes our line even when the plugin of that id is registered
+  from elsewhere (not ours, so uninstall leaves it running). That plugin may
+  then onboard this checkout on its next workspace event, unless the
+  operator lists it.
+- The entry is the root of the checkout the install runs from, so run the
+  install from the checkout Paseo knows as the project. From a linked git
+  worktree that root is the worktree, not the base, so the install warns,
+  and under `--strict` refuses before anything is written.
 
 ### Every path written
 

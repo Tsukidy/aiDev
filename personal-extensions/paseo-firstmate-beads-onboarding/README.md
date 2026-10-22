@@ -64,7 +64,9 @@ absolute path in the daemon's environment, else
   path inside the base, or a longer one, does not.
 - A `#` at the start of a line or after whitespace starts a comment that runs
   to the end of the line; a `#` inside a path is part of the path. The
-  installer reads the list by the same rule.
+  installer reads the list by the same rule. Before #37 a line like
+  `/srv/proj#note` meant `/srv/proj`; it now names a path that contains `#`,
+  so rewrite such a line as `/srv/proj #note`.
 - A listed project is skipped with a log line and is never initialized. It is
   not marked done, so once its line is removed the project's next workspace
   event onboards it as usual.
