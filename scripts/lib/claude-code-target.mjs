@@ -98,6 +98,13 @@ export function claudeCodeTarget(ctx) {
 	];
 	const agents = repoAgents().map((a) => ({ ...a, dest: join(agentsDir, `${a.name}.md`) }));
 
+	// Whether a skill name is present for Claude Code anywhere the skills CLI
+	// leaves one: its skills directory, the CLI's lock, or its canonical directory.
+	const presence = () => {
+		const lock = readSkillsLock(ctx)?.skills ?? {};
+		return (n) => lexists(join(skillsDir, n)) || n in lock || lexists(join(ctx.canonicalSkillsDir, n));
+	};
+
 	// --- step 5: the routing hook, added or (when its skill is excluded) taken out --------
 
 	function installHook(m, report) {
@@ -161,10 +168,8 @@ export function claudeCodeTarget(ctx) {
 		// delete the operator's copy and lock entry at uninstall. Skipped.
 		planSkills(m, desired) {
 			const ours = new Set(items(m, 'skill', (i) => i.agent === NAME).map((i) => i.name));
-			const lock = readSkillsLock(ctx)?.skills ?? {};
-			const collisions = desired.filter(
-				(n) => !ours.has(n) && (lexists(join(skillsDir, n)) || n in lock || lexists(join(ctx.canonicalSkillsDir, n))),
-			);
+			const isPresent = presence();
+			const collisions = desired.filter((n) => !ours.has(n) && isPresent(n));
 			return {
 				desired,
 				add: desired.filter((n) => !collisions.includes(n)),
@@ -184,26 +189,29 @@ export function claudeCodeTarget(ctx) {
 			`marked block ${SHEET_BLOCK} in ${claudeMd} including @${sheet}`,
 		],
 
-		install(m, plan, report) {
+		install(m, plan, report, checkpoint) {
 			// Step 2. Skills through the skills CLI: user level (-g), Claude Code
 			// only, copies (with one agent the CLI copies anyway; --copy says so).
+			// Every skill it is asked for is recorded, and checkpointed, first:
+			// killed mid-copy, it leaves skills a re-run must know as ours.
 			ensure(m, skillsLockItem(ctx.skillsLockPath, existsSync(ctx.skillsLockPath)), () => true);
+			for (const n of plan.add) ensure(m, skillItem(n, NAME, join(skillsDir, n)), (i) => i.agent === NAME && i.name === n);
+			checkpoint();
+			let failed = false;
 			if (plan.remove.length) {
 				const r = skillsCli(ctx, ['remove', '-g', '-y', '-a', NAME, '-s', ...plan.remove]);
-				if (r.status !== 0) return report.error(`skills CLI remove failed (exit ${r.status})`);
-				for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.remove.includes(i.name))) drop(m, i);
+				failed = r.status !== 0;
+				if (failed) report.error(`skills CLI remove failed (exit ${r.status})`);
+				else for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.remove.includes(i.name))) drop(m, i);
 			}
-			let failed = false;
-			if (plan.add.length) {
+			if (!failed && plan.add.length) {
 				const r = skillsCli(ctx, ['add', SKILLS_SRC, '-g', '-y', '--copy', '-a', NAME, '-s', ...plan.add]);
 				failed = r.status !== 0;
 				if (failed) report.error(`skills CLI add failed (exit ${r.status}); re-run install to converge`);
 			}
-			// Record what landed, even after a failure, so uninstall can reverse it.
-			for (const n of plan.add) {
-				const path = join(skillsDir, n);
-				if (existsSync(join(path, 'SKILL.md'))) ensure(m, skillItem(n, NAME, path), (i) => i.agent === NAME && i.name === n);
-			}
+			// What the CLI left nowhere, even after a failure, is not ours to remove.
+			const isPresent = presence();
+			for (const i of items(m, 'skill', (i) => i.agent === NAME && plan.add.includes(i.name) && !isPresent(i.name))) drop(m, i);
 			if (failed) return;
 
 			// Steps 3–4. The carried and effort agents of every installed skill,

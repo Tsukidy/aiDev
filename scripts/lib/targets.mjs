@@ -8,7 +8,9 @@
 //   preconditions(report)  read-only checks; report.error() stops the install before any write
 //   planSkills(m, desired) → { desired, add, remove, collisions } for its skills directory
 //   describe(plan)         the --dry-run lines
-//   install(m, plan, report)  do it, recording every item in the manifest m
+//   install(m, plan, report, checkpoint)  do it, recording every item in the
+//                          manifest m; what an external call may create is
+//                          recorded, and checkpoint() called, before the call
 //   stripHookEntry(settings, item)  reverse one of its hook-entry items (uninstall)
 //
 // Everything else install and uninstall do (orders, plugin, licenses,

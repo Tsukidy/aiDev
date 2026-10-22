@@ -381,7 +381,7 @@ export function noteSharedFile(m, path, existedBefore, format) {
 const CODECS = {
 	text: {
 		parse: (t) => t,
-		strip: (v, part) => stripBlock(v, part.id, part.before),
+		strip: (v, part) => stripBlock(v, part.id, blockBefore(v, part)),
 		same: (a, b) => a === b,
 		empty: (v) => v === '',
 		render: (v) => v,
@@ -472,6 +472,18 @@ export function upsertBlock(text, id, body) {
 	if (!text) return { text: block, before: '' };
 	const before = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
 	return { text: text + before + block, before };
+}
+
+// The text the install put in front of a marked block, from its manifest
+// item: `before` once recorded, or, for an intent (`at`: what the file held
+// before the orders script ran, #35), whatever now lies between that text,
+// while it is still the file's prefix, and the block; '' when it is not.
+export function blockBefore(text, item) {
+	if (item.before !== undefined) return item.before;
+	const range = blockRange(text, item.id);
+	const { length, sha256: hash } = item.at;
+	if (!range || range[0] < length || sha256(text.slice(0, length)) !== hash) return '';
+	return text.slice(length, range[0]);
 }
 
 // Remove a marked block plus the text the install put in front of it

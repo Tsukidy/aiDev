@@ -9,7 +9,10 @@
 //                 `shared: true`, a file we only add parts to (format: text | json)
 //   hook-entry    our entry in a shared settings file (target, event, marker)
 //   marked-block  our marked block in a shared text file (id, before: the text
-//                 the install put in front of the block)
+//                 the install put in front of the block), or, until the orders
+//                 script that appends it has run, the intent to append one
+//                 (at: the length and sha256 of the text the file held then;
+//                 blockBefore in aidev-install.mjs reads it in place of before)
 //   plugin        a Paseo plugin we register (id) from our copy (path): the one
 //                 record of it, written before the daemon is asked (see
 //                 upgradeUnrecordedPlugin for manifests from before #33);
@@ -32,8 +35,11 @@ import { basename, dirname } from 'node:path';
 // 2 since #33: a version-1 manifest is upgraded once on read (below) and
 // saved as the current version by whichever run writes it next. 3 since #34,
 // which added skip-entry: a version 2 needs no upgrade, and an older
-// checkout's uninstall refuses a version 3 instead of leaving our entry.
-export const SCHEMA_VERSION = 3;
+// checkout's uninstall refuses a version 3 instead of leaving our entry. 4
+// since #35, which lets a marked-block be an intent (at, no before): a
+// version 3 needs no upgrade, and an older checkout's uninstall would strip
+// an unsettled block without the text it was appended after, so it refuses a 4.
+export const SCHEMA_VERSION = 4;
 export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'skip-entry', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {
@@ -43,7 +49,7 @@ export function newManifest(repoCommit) {
 export function readManifest(path) {
 	if (!existsSync(path)) return null;
 	const m = JSON.parse(readFileSync(path, 'utf8'));
-	if (![1, 2, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
+	if (![1, 2, 3, SCHEMA_VERSION].includes(m.schemaVersion) || !Array.isArray(m.items)) {
 		throw new Error(`unsupported manifest at ${path} (schemaVersion ${m.schemaVersion})`);
 	}
 	if (m.schemaVersion === 1) upgradeUnrecordedPlugin(m);
@@ -113,6 +119,7 @@ export const ownedFileItem = ({ kind = 'file', name, path, sha256, existedBefore
 export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind: 'file', path, shared: true, format, existedBefore });
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
+export const markedBlockIntent = (path, id, at) => ({ kind: 'marked-block', path, id, at });
 export const pluginItem = (id, path, buildSha256) => ({ kind: 'plugin', id, path, ...(buildSha256 ? { buildSha256 } : {}) });
 export const skipEntryItem = (path, entry, existedBefore, before) => ({ kind: 'skip-entry', path, entry, existedBefore, before });
 export const backupItem = (of, path, sha256) => ({ kind: 'backup', of, path, sha256 });

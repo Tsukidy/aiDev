@@ -28,15 +28,19 @@
 //
 // Re-running converges: after a partial failure, after a repo update, and
 // after the exclude list changes (what is no longer wanted comes back out).
+// What an external call (the skills CLI, an orders script, the daemon) may
+// create is recorded, and the manifest saved, before the call (#35), so a run
+// killed at any of them leaves a manifest a re-run and uninstall go by.
 
 import { readFileSync, readdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
 	BEADS_CREATED_NAMES,
 	ONBOARDING_PLUGIN_DIR,
 	REPO,
 	SKILLS_SRC,
 	backupOnce,
+	blockBefore,
 	blockRange,
 	countLines,
 	findOnPath,
@@ -59,10 +63,25 @@ import {
 	resolveMateHome,
 	run,
 	saveManifest,
+	sha256,
 	skillDependencies,
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
-import { add, backupOf, beadsDbItem, dirItem, drop, ensure, markedBlockItem, newManifest, sharedFile } from './lib/manifest.mjs';
+import {
+	add,
+	backupOf,
+	beadsDbItem,
+	dirItem,
+	drop,
+	ensure,
+	first,
+	items,
+	markedBlockIntent,
+	markedBlockItem,
+	newManifest,
+	replace,
+	sharedFile,
+} from './lib/manifest.mjs';
 import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
 import { installTargets } from './lib/targets.mjs';
 
@@ -183,17 +202,16 @@ if (flags['dry-run']) {
 // --- execute ------------------------------------------------------------------------
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
-// Save the manifest with every directory the install has created so far, so
-// an interrupted run leaves nothing uninstall cannot find. finish() and the
-// plugin step (8b) checkpoint; a run interrupted before the first checkpoint
-// can still leave directories unrecorded.
+// Save the manifest, naming every directory the install may create, before
+// each external call, so an interrupted run leaves nothing uninstall cannot
+// find. finish() drops the directories that were never created.
 const checkpoint = () => {
-	saveManifest(ctx, m); // creates the state directory before it is recorded
-	for (const d of watched) if (isDir(d)) ensure(m, dirItem(d), (i) => i.path === d);
+	for (const d of watched) ensure(m, dirItem(d), (i) => i.path === d);
 	saveManifest(ctx, m);
 };
 const finish = (code) => {
-	checkpoint();
+	for (const i of items(m, 'dir', (i) => !isDir(i.path))) drop(m, i);
+	saveManifest(ctx, m);
 	if (code) report.die('stopped after an error; the manifest records what was done — re-run to converge, or uninstall');
 	report.say(`done; manifest at ${ctx.manifestPath}`);
 	if (report.warnings.length) report.say(`${report.warnings.length} warning(s) above`);
@@ -201,7 +219,7 @@ const finish = (code) => {
 };
 
 // Steps 2–7, per target.
-targets.forEach((t, i) => t.install(m, plans[i], report));
+targets.forEach((t, i) => t.install(m, plans[i], report, checkpoint));
 if (report.errors.length) finish(1);
 
 // Attribution travels with the install: NOTICE, the provenance manifest and
@@ -209,39 +227,49 @@ if (report.errors.length) finish(1);
 for (const f of licenseFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src) });
 
 // Step 8a: the two orders installers, each appending its own marked block.
-// A block is ours only when this install appended it; what was put in front
-// of it is recorded so uninstall removes exactly that.
+// A block is ours only when this install appended it: the intent to append
+// it, and what the beads installer's bd init may create, are recorded before
+// the script runs, and settled after it with what the script put in front of
+// the block, so uninstall removes exactly that.
 const captainExisted = sharedFile(m, captain)?.existedBefore ?? captainText !== null;
+const freshRecord = !sharedFile(m, captain);
 const freshBackup = !backupOf(m, captain);
 if (captainExisted) backupOnce(ctx, m, captain);
+noteSharedFile(m, captain, captainExisted);
+const ourBlock = (id) => first(m, 'marked-block', (i) => i.path === captain && i.id === id);
 for (const o of ORDERS) {
 	const pre = readText(captain) ?? '';
-	const beadsBefore = o.beads ? BEADS_CREATED_NAMES.filter((n) => lexists(join(mateHome, n))) : [];
+	if (!ourBlock(o.block) && !blockRange(pre, o.block)) add(m, markedBlockIntent(captain, o.block, { length: pre.length, sha256: sha256(pre) }));
+	if (o.beads && !lexists(join(mateHome, '.beads'))) {
+		for (const n of BEADS_CREATED_NAMES) {
+			const p = join(mateHome, n);
+			if (!lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
+		}
+	}
+	checkpoint();
 	const r = run(ctx, 'bash', [o.script]);
+	const post = readText(captain) ?? '';
+	const item = ourBlock(o.block);
+	if (item?.at) {
+		if (blockRange(post, o.block)) replace(m, item, markedBlockItem(captain, o.block, blockBefore(post, item)));
+		else drop(m, item);
+	}
+	if (o.beads) for (const i of items(m, 'beads-db', (i) => dirname(i.path) === mateHome && !lexists(i.path))) drop(m, i);
 	if (r.status !== 0) {
 		report.error(`${o.script} failed (exit ${r.status})`);
 		break;
 	}
-	const post = readText(captain) ?? '';
-	if (!blockRange(pre, o.block) && blockRange(post, o.block) && post.startsWith(pre)) {
-		const at = post.indexOf(markers(o.block)[0], pre.length);
-		add(m, markedBlockItem(captain, o.block, post.slice(pre.length, at)));
-	}
-	if (o.beads) {
-		for (const n of BEADS_CREATED_NAMES) {
-			const p = join(mateHome, n);
-			if (!beadsBefore.includes(n) && lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
-		}
-	}
 }
 const captainNow = readText(captain);
-if (captainNow !== captainText || sharedFile(m, captain)) noteSharedFile(m, captain, captainExisted);
-else if (freshBackup && backupOf(m, captain)) {
-	// Nothing changed and nothing of ours is in it: no backup to keep.
+if (captainNow === captainText && freshRecord) {
+	// Nothing changed and nothing of ours is in it: no record, no backup to keep.
+	drop(m, sharedFile(m, captain));
 	const b = backupOf(m, captain);
-	rmSync(b.path, { force: true });
-	drop(m, b);
-}
+	if (freshBackup && b) {
+		rmSync(b.path, { force: true });
+		drop(m, b);
+	}
+} else noteSharedFile(m, captain, captainExisted);
 if (report.errors.length) finish(1);
 
 // Step 8b: the onboarding plugin.
