@@ -20,60 +20,51 @@
 //   6. pstack-models.md, setup-pstack's default, only if absent
 //   7. a marked block in the target's CLAUDE.md including the sheet
 //   8. the standing-orders and beads captain-orders installers (their own
-//      idempotency), this checkout's root on the beads onboarding skip list,
-//      and the beads onboarding plugin, registered with Paseo from a copy
-//      (`paseo plugin install`, or `reload` to rebuild ours)
+//      idempotency; lib/orders.mjs), this checkout's root on the beads
+//      onboarding skip list, and the beads onboarding plugin, registered with
+//      Paseo from a copy (`paseo plugin install`, or `reload` to rebuild
+//      ours; lib/onboarding-plugin.mjs)
 //   9. the install manifest under $XDG_STATE_HOME/aidev, with a backup of
 //      every pre-existing file modified; NOTICE and licenses beside the install
 //
 // Re-running converges: after a partial failure, after a repo update, and
 // after the exclude list changes (what is no longer wanted comes back out).
+// What an external call (the skills CLI, an orders script, the daemon) may
+// create is recorded, and the manifest saved, before the call (#35), so a run
+// killed at any of them leaves a manifest a re-run and uninstall go by.
 
-import { readFileSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-	BEADS_CREATED_NAMES,
-	ONBOARDING_PLUGIN_DIR,
 	REPO,
 	SKILLS_SRC,
-	backupOnce,
-	blockRange,
-	countLines,
 	findOnPath,
 	insideHome,
 	isDir,
-	lexists,
 	loadManifest,
 	makeReport,
-	markers,
 	missingDirs,
 	nodeVersionOk,
-	noteSharedFile,
 	parseFlags,
 	placeOwnedFile,
 	readExcludeList,
-	readText,
 	repoCommit,
 	repoSkills,
 	resolveContext,
-	resolveMateHome,
-	run,
 	saveManifest,
 	skillDependencies,
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
-import { add, backupOf, beadsDbItem, dirItem, drop, ensure, markedBlockItem, newManifest, sharedFile } from './lib/manifest.mjs';
+import { dirItem, drop, ensure, items, newManifest } from './lib/manifest.mjs';
 import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
+import { ordersStep } from './lib/orders.mjs';
 import { installTargets } from './lib/targets.mjs';
 
 const report = makeReport('install');
 const flags = parseFlags(process.argv.slice(2), ['--dry-run', '--strict'], 'install');
 const ctx = resolveContext(process.env);
+const orders = ordersStep(ctx);
 const plugin = onboardingPlugin(ctx);
-const ORDERS = [
-	{ script: join(REPO, 'scripts', 'install-standing-orders.sh'), block: 'aidev-standing-orders' },
-	{ script: join(ONBOARDING_PLUGIN_DIR, 'install-captain-orders.sh'), block: 'paseo-beads-onboarding', beads: true },
-];
 
 // --- 1. preconditions -------------------------------------------------------------
 
@@ -88,26 +79,7 @@ else warnOrStrictError("bun: not found — poteto-mode's PR tooling (scripts wat
 const common = worktreeCommonDir();
 if (common) warnOrStrictError(`${REPO} is a linked git worktree (of ${common}): the beads onboarding skip list would name it, not the main checkout Paseo knows as the project — run the install from the main checkout`);
 
-const mateHome = resolveMateHome(ctx);
-if (!mateHome) report.error(`first mate home not found under ${ctx.paseoHome} — launch the first mate once so its home exists (or set PASEO_HOME)`);
-const captain = mateHome && join(mateHome, 'data', 'captain.md');
-const captainText = captain && readText(captain);
-// The orders installers find their blocks by marker name, so a marker name
-// anywhere but on its own marker line would make them misread the file.
-for (const o of ORDERS) {
-	if (captainText === null || captainText === undefined) continue;
-	try {
-		blockRange(captainText, o.block);
-		for (const marker of markers(o.block)) {
-			const name = marker.slice(5, -4);
-			if (captainText.split(name).length - 1 !== countLines(captainText, marker)) {
-				report.error(`${captain} mentions ${name} outside its marker line — the orders installer would misread it; reword it and re-run`);
-			}
-		}
-	} catch (e) {
-		report.error(`${captain}: ${e.message} — remove the partial block and re-run`);
-	}
-}
+orders.preconditions(report);
 
 let m;
 try {
@@ -131,7 +103,7 @@ const written = [
 	...licenseFiles.map((f) => f.dest),
 	...plugin.paths(),
 	...targets.flatMap((t) => t.paths()),
-	...(mateHome ? [mateHome, captain] : []),
+	...orders.paths(),
 ];
 for (const p of written) {
 	if (!insideHome(ctx, p)) report.error(`refusing to write outside HOME (${ctx.home}): ${p}`);
@@ -171,7 +143,7 @@ if (flags['dry-run']) {
 	const plan = [
 		...targets.flatMap((t, i) => t.describe(plans[i])),
 		...licenseFiles.map((f) => `license/notice copy ${f.dest}`),
-		...ORDERS.map((o) => `run ${o.script} (marked block ${o.block} in ${captain})`),
+		...orders.describe(),
 		...plugin.describe(pluginPlan),
 		`manifest ${ctx.manifestPath}`,
 	];
@@ -183,17 +155,16 @@ if (flags['dry-run']) {
 // --- execute ------------------------------------------------------------------------
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
-// Save the manifest with every directory the install has created so far, so
-// an interrupted run leaves nothing uninstall cannot find. finish() and the
-// plugin step (8b) checkpoint; a run interrupted before the first checkpoint
-// can still leave directories unrecorded.
+// Save the manifest, naming every directory the install may create, before
+// each external call, so an interrupted run leaves nothing uninstall cannot
+// find. finish() drops the directories that were never created.
 const checkpoint = () => {
-	saveManifest(ctx, m); // creates the state directory before it is recorded
-	for (const d of watched) if (isDir(d)) ensure(m, dirItem(d), (i) => i.path === d);
+	for (const d of watched) ensure(m, dirItem(d), (i) => i.path === d);
 	saveManifest(ctx, m);
 };
 const finish = (code) => {
-	checkpoint();
+	for (const i of items(m, 'dir', (i) => !isDir(i.path))) drop(m, i);
+	saveManifest(ctx, m);
 	if (code) report.die('stopped after an error; the manifest records what was done — re-run to converge, or uninstall');
 	report.say(`done; manifest at ${ctx.manifestPath}`);
 	if (report.warnings.length) report.say(`${report.warnings.length} warning(s) above`);
@@ -201,47 +172,15 @@ const finish = (code) => {
 };
 
 // Steps 2–7, per target.
-targets.forEach((t, i) => t.install(m, plans[i], report));
+targets.forEach((t, i) => t.install(m, plans[i], report, checkpoint));
 if (report.errors.length) finish(1);
 
 // Attribution travels with the install: NOTICE, the provenance manifest and
 // every license file of the tree, plus the repository's own license.
 for (const f of licenseFiles) placeOwnedFile(ctx, m, report, { path: f.dest, content: readFileSync(f.src) });
 
-// Step 8a: the two orders installers, each appending its own marked block.
-// A block is ours only when this install appended it; what was put in front
-// of it is recorded so uninstall removes exactly that.
-const captainExisted = sharedFile(m, captain)?.existedBefore ?? captainText !== null;
-const freshBackup = !backupOf(m, captain);
-if (captainExisted) backupOnce(ctx, m, captain);
-for (const o of ORDERS) {
-	const pre = readText(captain) ?? '';
-	const beadsBefore = o.beads ? BEADS_CREATED_NAMES.filter((n) => lexists(join(mateHome, n))) : [];
-	const r = run(ctx, 'bash', [o.script]);
-	if (r.status !== 0) {
-		report.error(`${o.script} failed (exit ${r.status})`);
-		break;
-	}
-	const post = readText(captain) ?? '';
-	if (!blockRange(pre, o.block) && blockRange(post, o.block) && post.startsWith(pre)) {
-		const at = post.indexOf(markers(o.block)[0], pre.length);
-		add(m, markedBlockItem(captain, o.block, post.slice(pre.length, at)));
-	}
-	if (o.beads) {
-		for (const n of BEADS_CREATED_NAMES) {
-			const p = join(mateHome, n);
-			if (!beadsBefore.includes(n) && lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
-		}
-	}
-}
-const captainNow = readText(captain);
-if (captainNow !== captainText || sharedFile(m, captain)) noteSharedFile(m, captain, captainExisted);
-else if (freshBackup && backupOf(m, captain)) {
-	// Nothing changed and nothing of ours is in it: no backup to keep.
-	const b = backupOf(m, captain);
-	rmSync(b.path, { force: true });
-	drop(m, b);
-}
+// Step 8a: the orders installers.
+orders.install(m, report, checkpoint);
 if (report.errors.length) finish(1);
 
 // Step 8b: the onboarding plugin.

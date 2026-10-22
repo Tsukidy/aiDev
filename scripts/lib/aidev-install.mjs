@@ -50,10 +50,6 @@ export const SKILLS_SRC = join(REPO, 'skills');
 export const SKILLS_CLI = 'skills@1.7.4';
 const SKILLS_CLI_MIN_NODE = [22, 20];
 export const ONBOARDING_PLUGIN_DIR = join(REPO, 'personal-extensions', 'paseo-firstmate-beads-onboarding');
-// What bd init --quiet --stealth creates in a non-git home
-// (docs/research/beads-cli-memory-surface.md A2): its store, a gate lock, and
-// a git repository.
-export const BEADS_CREATED_NAMES = ['.beads', '.beads.gate.lock', '.git'];
 
 // --- output and flags ---------------------------------------------------------------
 
@@ -381,7 +377,7 @@ export function noteSharedFile(m, path, existedBefore, format) {
 const CODECS = {
 	text: {
 		parse: (t) => t,
-		strip: (v, part) => stripBlock(v, part.id, part.before),
+		strip: (v, part) => stripBlock(v, part.id, blockBefore(v, part)),
 		same: (a, b) => a === b,
 		empty: (v) => v === '',
 		render: (v) => v,
@@ -472,6 +468,18 @@ export function upsertBlock(text, id, body) {
 	if (!text) return { text: block, before: '' };
 	const before = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
 	return { text: text + before + block, before };
+}
+
+// The text the install put in front of a marked block, from its manifest
+// item: `before` once recorded, or, for an intent (`at`: what the file held
+// before the orders script ran, #35), whatever now lies between that text,
+// while it is still the file's prefix, and the block; '' when it is not.
+export function blockBefore(text, item) {
+	if (item.before !== undefined) return item.before;
+	const range = blockRange(text, item.id);
+	const { length, sha256: hash } = item.at;
+	if (!range || sha256(text.slice(0, length)) !== hash) return '';
+	return text.slice(length, range[0]);
 }
 
 // Remove a marked block plus the text the install put in front of it

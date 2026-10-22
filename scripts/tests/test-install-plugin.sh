@@ -93,7 +93,7 @@ check "install with a failed plugin build → uninstall restores the snapshot" t
 
 sb=$(new_sandbox plugin-interrupted)
 before=$(snapshot "$sb/home")
-(run_in "$sb" full STUB_FAIL=paseo-interrupt -- "$installer") 2>/dev/null # the shell's "Killed" notice
+(run_in "$sb" full STUB_INTERRUPT=paseo-install -- "$installer") 2>/dev/null # the shell's "Killed" notice
 check "the interrupted install did not finish" test $? -ne 0
 uninstall_in "$sb" --purge --yes
 check "uninstall after an interrupted install exits 0" test $? -eq 0
@@ -196,7 +196,7 @@ before=$(snapshot "$sb/home")
 install_in "$sb"
 age_build "$sb"
 : >"$sb/stub.log"
-(run_in "$sb" full STUB_FAIL=paseo-interrupt -- "$installer") 2>/dev/null # the shell's "Killed" notice
+(run_in "$sb" full STUB_INTERRUPT=paseo-reload -- "$installer") 2>/dev/null # the shell's "Killed" notice
 check "the install interrupted at the reload did not finish" test $? -ne 0
 check "the interrupted call was the reload" test "$(plugin_calls "$sb")" = "plugin reload $plugin_id"
 : >"$sb/stub.log"

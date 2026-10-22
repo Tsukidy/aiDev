@@ -124,7 +124,7 @@ install_in "$sb"
 check "a re-run over a version-2 manifest exits 0" test $? -eq 0
 check "it adds this checkout to the skip list" test "$(entries "$sb")" = "$repo"
 check "it records the entry" recorded "$sb"
-check "it saves the manifest as version 3" manifest_true "$sb" 'm.schemaVersion === 3'
+check "it saves the manifest as version 4" manifest_true "$sb" 'm.schemaVersion === 4'
 uninstall_in "$sb" --purge --yes
 check "uninstall after that restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
@@ -132,7 +132,7 @@ check "uninstall after that restores the snapshot" test "$(snapshot "$sb/home")"
 # interrupted at the plugin's registration has already skipped this checkout.
 sb=$(new_sandbox skip-interrupted)
 before=$(snapshot "$sb/home")
-(run_in "$sb" full STUB_FAIL=paseo-interrupt -- "$installer") 2>/dev/null # the shell's "Killed" notice
+(run_in "$sb" full STUB_INTERRUPT=paseo-install -- "$installer") 2>/dev/null # the shell's "Killed" notice
 check "the interrupted install did not finish" test $? -ne 0
 check "the interrupted install had written our entry" test "$(entries "$sb")" = "$repo"
 check "the interrupted install had recorded it" recorded "$sb"

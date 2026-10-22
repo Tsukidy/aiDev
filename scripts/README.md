@@ -7,14 +7,15 @@ they call, and the offline tests for all of it.
 | File | Role |
 | --- | --- |
 | `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
-| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`), and the manifest's changes (`tests/manifest.test.mjs`). |
+| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the onboarding plugin step's decision table (`tests/onboarding-plugin.test.mjs`), the manifest's changes (`tests/manifest.test.mjs`), and the text in front of a marked block, read from its record (`tests/aidev-install.test.mjs`). |
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
+| `lib/orders.mjs` | The orders step (#35): the two orders installers, each block recorded as an intent before its script runs and settled after, with a subset of the plugin step's contract. |
 | `lib/onboarding-plugin.mjs` | The beads onboarding plugin step (#33): the copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
 | `lib/onboarding-skip-list.mjs` | That step's skip-list entry (#34): this checkout's root on the plugin's skip list, added before the plugin is registered, removed at uninstall. |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
-| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33), the third its skip-list cases (#34). Run directly, or via `tests/run.sh`. |
+| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh`, `tests/test-install-interrupt.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the onboarding plugin step's cases (#33), the third its skip-list cases (#34), the fourth the installs killed at an external call (#35). Run directly, or via `tests/run.sh`. |
 | `tests/lib/install-harness.sh`, `tests/lib/cli-stub.mjs` | Their shared harness (sourced): sandboxes, helpers, and the stub CLIs (`npx`, `paseo`, `bd`, `bun`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
 | `tests/test-standing-orders.sh` | That installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
@@ -123,6 +124,29 @@ are refreshed, the skills re-copied), and after the exclude list changes
 (skills, agents and the hook no longer wanted come back out). A file this
 installer placed and the operator then edited is left as is, with a warning.
 
+An install killed at an external call converges too (#35). Before each call,
+the install records what the call may create and saves the manifest, as the
+plugin step does for its plugin. The records cover the skills the CLI is
+asked for, the directories the install may create, each orders block, and
+what `bd init` creates in the mate's home. An orders block is recorded as an
+intent to append it: the length and hash of the text the file held. After the
+call, records of what it did not create are dropped, and a block's record is
+settled with the text the script put in front of it. A re-run settles an
+intent a killed run left the same way, anchored again at what the file holds
+when its script runs, so a line the operator added since, or an upgrade of
+the block before, is not taken for the script's and removed with the block.
+The one exception is a `captain.md` the install created that holds only the
+header the scripts write: the intent is anchored at the file's start, so the
+header goes with the block. A re-run also drops `captain.md`'s record and
+backup, which a killed run leaves, when nothing of ours is in the file and no
+orders script has changed it (the record says so once one has).
+So a re-run knows the skills a killed run copied as ours, and uninstall after
+a kill at any call restores the pre-install state. One case needs the re-run
+first: a kill inside the standing-orders script after it created `captain.md`
+with its header, but before it appended the block. Uninstall straight after
+leaves that header; uninstall after a re-run does not.
+`tests/test-install-interrupt.sh` kills the install at each such call.
+
 What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
 entry in `settings.json` that this install did not add is left in place and
@@ -218,11 +242,13 @@ The npx package cache under `~/.npm` is npm's and is left alone.
 
 ### The manifest
 
-JSON at `<state>/install-manifest.json`: `schemaVersion` (3), `installedAt` (the
+JSON at `<state>/install-manifest.json`: `schemaVersion` (4), `installedAt` (the
 first install), `repoCommit` (the latest install), and `items`, each with a
 `kind` and a `path`: `skill`, `agent`, `file` (with `sha256` at install time;
 `shared: true` for settings.json, CLAUDE.md and captain.md), `hook-entry`,
-`marked-block` (with the text the install put in front of the block),
+`marked-block` (with `before`, the text the install put in front of the
+block, or, until the orders script that appends it has run, `at`, the length
+and sha256 of the text the file held before it),
 `plugin` (with `id` and `buildSha256`, the build the daemon last made of the
 copy), `skip-entry` (with `entry` and the text put in front of it),
 `backup` (with `of`), `dir`, `beads-db`, `skills-lock`. A re-run that
@@ -234,7 +260,10 @@ and reading it adds the item, with the copy directory's name as the id
 (both installers name it after the id); the next save writes the current
 version. Version 3 (#34) only adds `skip-entry`, so a version 2 is read as
 is; the version went up so that an older checkout's uninstall refuses it (the
-rollback note above) rather than leave our skip-list entry behind.
+rollback note above) rather than leave our skip-list entry behind. Version 4
+(#35) only adds `at` on `marked-block`, so a version 3 is read as is; an
+older checkout's uninstall would strip such a block without the text it was
+appended after, so it refuses a 4.
 
 ### The orders block upgrade story
 
@@ -307,6 +336,8 @@ bash scripts/tests/test-standing-orders.sh   # the orders installer alone
 bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alone
 bash scripts/tests/test-install-plugin.sh    # their onboarding plugin step alone
 bash scripts/tests/test-install-skip-list.sh # its skip-list entry alone
+bash scripts/tests/test-install-interrupt.sh # installs killed at an external call
 node --test scripts/tests/onboarding-plugin.test.mjs   # the plugin step's decision table
 node --test scripts/tests/manifest.test.mjs            # the manifest's changes
+node --test scripts/tests/aidev-install.test.mjs       # the text in front of a marked block, from its record
 ```
