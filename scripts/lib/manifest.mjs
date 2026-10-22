@@ -94,7 +94,9 @@ export const drop = (m, item) => {
 export const ensure = (m, item, pred) => first(m, item.kind, pred) ?? add(m, item);
 // Put a new item where an old one was.
 export const replace = (m, old, item) => {
-	m.items[m.items.indexOf(old)] = item;
+	const i = m.items.indexOf(old);
+	if (i < 0) throw new Error(`cannot replace a ${old.kind} item that is not in the manifest (${old.path})`);
+	m.items[i] = item;
 	return item;
 };
 

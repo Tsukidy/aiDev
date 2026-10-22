@@ -678,6 +678,7 @@ run_harness() { # run_harness <script> <label>
 
 run_harness test-standing-orders.sh "the standing-orders installer tests pass (ticket #08)"
 run_harness test-install.sh "the installer and uninstaller tests pass (ticket #21)"
+check "the install manifest's changes hold (#37)" node --test "$here/manifest.test.mjs"
 check "the onboarding plugin step's decision table holds (#33)" node --test "$here/onboarding-plugin.test.mjs"
 run_harness test-install-plugin.sh "the installer's onboarding plugin step tests pass (#33)"
 run_harness test-install-skip-list.sh "the installer's onboarding skip-list tests pass (#34)"
