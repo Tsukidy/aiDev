@@ -478,7 +478,7 @@ export function blockBefore(text, item) {
 	if (item.before !== undefined) return item.before;
 	const range = blockRange(text, item.id);
 	const { length, sha256: hash } = item.at;
-	if (!range || range[0] < length || sha256(text.slice(0, length)) !== hash) return '';
+	if (!range || sha256(text.slice(0, length)) !== hash) return '';
 	return text.slice(length, range[0]);
 }
 

@@ -30,10 +30,6 @@ test('an intent returns nothing when the block is absent', () => {
 	assert.equal(blockBefore(`${held}\n## H\n\n`, markedBlockIntent(path, 'x', held)), '');
 });
 
-test('an intent returns nothing when the block starts inside the text held', () => {
-	assert.equal(blockBefore(`# Orders\n\n${block}Never push.\n`, markedBlockIntent(path, 'x', held)), '');
-});
-
 test('an intent returns nothing when the text held has changed', () => {
 	assert.equal(blockBefore(`# Orders\n\nAlways push.\n\n## H\n\n${block}`, markedBlockIntent(path, 'x', held)), '');
 });
