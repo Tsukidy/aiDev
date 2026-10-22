@@ -16,8 +16,8 @@
 // the operator already has for this checkout is theirs: nothing is added,
 // nothing recorded.
 
-import { rmSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { mkdirSync, rmSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { REPO, lexists, readText, realResolve, writeShared } from './aidev-install.mjs';
 import { add, drop, first, items, replace, skipEntryItem } from './manifest.mjs';
 
@@ -101,10 +101,10 @@ export function onboardingSkipList(ctx) {
 		describe,
 
 		// Planned again from the list as it is now, so a line the operator
-		// added since the plan read it is kept and counts. Recorded and
-		// checkpointed before the list is written, so an interrupted run
-		// leaves no entry uninstall cannot find. Our entry, deleted since,
-		// comes back (as our hook entry does).
+		// added since the plan read it is kept and counts. Recorded, and its
+		// directory created, before the checkpoint that precedes the write,
+		// so an interrupted run leaves no entry or directory uninstall cannot
+		// find. Our entry, deleted since, comes back (as our hook entry does).
 		install(m, report, checkpoint) {
 			const { action, record, text } = plan(m);
 			report.say(describe({ action }));
@@ -113,6 +113,7 @@ export function onboardingSkipList(ctx) {
 			const item = skipEntryItem(path, root, text !== null && (record?.existedBefore ?? true), next.before);
 			if (record) replace(m, record, item);
 			else add(m, item);
+			mkdirSync(dirname(path), { recursive: true });
 			checkpoint();
 			writeShared(path, next.text);
 		},

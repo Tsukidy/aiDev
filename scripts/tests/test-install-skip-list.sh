@@ -149,6 +149,21 @@ check "the interrupted install had recorded it" recorded "$sb"
 uninstall_in "$sb" --purge --yes
 check "uninstall after the interrupted install restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
+# The directory the list goes in is created and recorded before the list is
+# written: a run that stops right after writing it (here, placing the plugin
+# copy fails, as a file stands where its directory goes) leaves no directory
+# uninstall cannot find.
+sb=$(new_sandbox skip-stopped-after-write)
+mkdir -p "$(dirname "$(plugin_copy "$sb")")"
+: >"$(plugin_copy "$sb")"
+before=$(snapshot "$sb/home")
+install_in "$sb"
+check "the install stopped after writing the skip list did not finish" test $? -ne 0
+check "it had written our entry" test "$(entries "$sb")" = "$repo"
+uninstall_in "$sb" --purge --yes
+check "uninstall after it exits 0" test $? -eq 0
+check "uninstall after it restores the snapshot, the list's directory removed" test "$(snapshot "$sb/home")" = "$before"
+
 # A skip list that is not a file is refused before anything is written.
 sb=$(new_sandbox skip-not-a-file)
 mkdir -p "$(skip_list_of "$sb")"
