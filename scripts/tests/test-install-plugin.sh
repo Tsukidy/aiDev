@@ -4,9 +4,9 @@
 # the daemon call install makes for the plugin's registration, and that
 # uninstall takes back exactly ours, against the stub daemon of
 # lib/cli-stub.mjs, which, like Paseo, registers a plugin before building it
-# and keeps it, as failed, when the build fails. A copy of this checkout with
-# a second, fixture plugin shows the step over more than one plugin (#39). On
-# the shared harness of lib/install-harness.sh; fully offline.
+# and keeps it, as failed, when the build fails. A copy of this checkout that
+# lists a second, fixture plugin shows the step over more than one plugin
+# (#39). On the shared harness of lib/install-harness.sh; fully offline.
 #
 # Usage: tests/test-install-plugin.sh
 
@@ -286,10 +286,10 @@ check "uninstall under another XDG_DATA_HOME exits 0" test $? -eq 0
 check "it removes the registration from the recorded copy" plugin_status_is "$sb" ""
 check "it restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
-# --- a second plugin in the tree is installed, converges and uninstalls with the first (#39) --
+# --- a second listed plugin is installed, converges and uninstalls with the first (#39) ------
 #
 # From a git copy of this checkout with a fixture plugin added under its
-# personal-extensions/, which sorts after the beads onboarding plugin.
+# personal-extensions/ and listed after the beads onboarding plugin.
 
 fixture_id=aidev-fixture-plugin
 two=$tmp/two-plugins
@@ -300,6 +300,16 @@ printf '{"id": "%s"}\n' "$fixture_id" >"$fixture/paseo-plugin.json"
 printf '{"name": "test-fixture-plugin", "private": true, "type": "module", "files": ["index.server.ts", "paseo-plugin.json", "package.json"]}\n' >"$fixture/package.json"
 printf 'import { join } from "node:path";\nexport default { name: join("aidev", "fixture") };\n' >"$fixture/index.server.ts"
 printf 'not in the files list\n' >"$fixture/README.md"
+
+# The copy's PASEO_PLUGIN_DIRS: the beads onboarding plugin, then the given
+# directories of its personal-extensions/.
+list_plugins() { # list_plugins [dir ...]
+	local lib=$two/main/scripts/lib/aidev-install.mjs dirs=ONBOARDING_PLUGIN_DIR d
+	for d in "$@"; do dirs+=", join(REPO, 'personal-extensions', '$d')"; done
+	sed -i "s|^export const PASEO_PLUGIN_DIRS = \[.*\];\$|export const PASEO_PLUGIN_DIRS = [$dirs];|" "$lib"
+	grep -qxF "export const PASEO_PLUGIN_DIRS = [$dirs];" "$lib" || { echo "list_plugins: the PASEO_PLUGIN_DIRS line moved; update this helper" >&2; return 1; }
+}
+check "the checkout copy lists the fixture plugin" list_plugins test-fixture-plugin
 
 two_install() { run_in "$1" full "${@:2}" -- "$two/main/scripts/install.mjs"; } # two_install <sb> [VAR=value ...]
 two_uninstall() { run_in "$1" full -- "$two/main/scripts/uninstall.mjs" --purge --yes; }
@@ -331,7 +341,7 @@ check "the dry run names the skip-list entry, then each plugin's install, in ord
 check "the dry run names the second plugin's daemon call" out_has "$sb" "plugin $fixture_id: copy to $(plugin_copy "$sb" "$fixture_id"), then paseo plugin install $(plugin_copy "$sb" "$fixture_id")"
 two_install "$sb"
 status=$?
-check "install with two plugins in the tree exits 0" test "$status" -eq 0
+check "install with two plugins listed exits 0" test "$status" -eq 0
 [ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
 check "install lists this checkout on the skip list before it installs either plugin" test "$(step_order "$sb")" = "$expected_order"
 check "install makes one daemon call per plugin, in order" test "$(plugin_calls "$sb")" = "$(both_installed "$sb")"
@@ -400,6 +410,7 @@ killed_at_second "killed once the second plugin is recorded" "AIDEV_TEST_KILL=re
 
 twin=$two/main/personal-extensions/test-fixture-twin
 cp -r "$fixture" "$twin"
+list_plugins test-fixture-plugin test-fixture-twin
 sb=$(new_sandbox two-plugins-one-id)
 before=$(snapshot "$sb/home")
 two_install "$sb"
@@ -408,5 +419,6 @@ check "it names the id and both directories" out_has "$sb" "plugin id $fixture_i
 check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
 check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
 rm -r "$twin"
+list_plugins test-fixture-plugin
 
 summary

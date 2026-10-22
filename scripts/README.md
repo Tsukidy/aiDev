@@ -11,7 +11,7 @@ they call, and the offline tests for all of it.
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
 | `lib/orders.mjs` | The orders step (#35): the two orders installers, each block recorded as an intent before its script runs and settled after, with a subset of the plugins step's contract. |
-| `lib/paseo-plugins.mjs` | The Paseo plugins step (#33, #39): the repo's plugins (every `personal-extensions/*/` directory holding a `paseo-plugin.json`), and for each its copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
+| `lib/paseo-plugins.mjs` | The Paseo plugins step (#33, #39): the plugins listed in `PASEO_PLUGIN_DIRS` (`lib/aidev-install.mjs`), and for each its copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
 | `lib/onboarding-skip-list.mjs` | The beads onboarding skip-list step (#34): this checkout's root on that plugin's skip list, added before the plugins are registered, removed after them at uninstall. |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
@@ -96,29 +96,30 @@ touches nothing.
    onboarding `install-captain-orders.sh` (each idempotent on its own; the
    latter creates the mate's home memory database with `bd init`), then this
    checkout's root on the beads onboarding plugin's skip list (below), so
-   that plugin never runs `bd init` in this repository, then the repo's
-   Paseo plugins: every `personal-extensions/*/` directory that holds a
-   `paseo-plugin.json`, in sorted order (today only the beads onboarding
-   plugin). For each, the files its `package.json` lists are copied under
-   the data directory and installed with `paseo plugin install <copy>`. The
-   daemon builds a plugin where it lies, on every load, so the copy must
-   build on its own: the plugin's source imports only what the host supplies,
-   which the beads plugin's own tests guard (#33). Each plugin is recorded
-   before the daemon is asked, because Paseo keeps a plugin whose build
-   failed registered; the registration from the recorded copy is ours to
-   reload and to remove at uninstall, and one of that id from anywhere else
-   is left alone. A re-run reloads ours when Paseo reports it `failed`, or
-   when it runs and the copy's files, as the run leaves them, differ from
-   what the daemon last built successfully, which the manifest records. So a
-   failed reload is retried, and an operator's edit of the copy reloads it
-   once. A disabled plugin is left disabled, and its copy is still refreshed.
-   A file a pre-#33 copy held that the copy no longer lists (its README.md)
-   is left for uninstall to remove. If a plugin is registered from a copy an
-   earlier install recorded elsewhere (the data directory moved), install
-   refuses: uninstall first. Two directories declaring one plugin id are
-   refused too, before anything is written. A failed daemon call stops the
-   install before the next plugin; a re-run retries it. The dry run prints the daemon call
-   the run will make for each plugin.
+   that plugin never runs `bd init` in this repository, then the plugins
+   listed in `PASEO_PLUGIN_DIRS` (`lib/aidev-install.mjs`), in that order
+   (today only the beads onboarding plugin). A plugin directory is installed
+   only once it is listed there. For each, the files its `package.json` lists
+   are copied under the data directory and installed with
+   `paseo plugin install <copy>`. The daemon builds a plugin where it lies,
+   on every load, so the copy must build on its own: the plugin's source
+   imports only what the host supplies, which the beads plugin's own tests
+   guard (#33). Each plugin is recorded before the daemon is asked, because
+   Paseo keeps a plugin whose build failed registered; the registration from
+   the recorded copy is ours to reload and to remove at uninstall, and one of
+   that id from anywhere else is left alone. A re-run reloads ours when Paseo
+   reports it `failed`, or when it runs and the copy's files, as the run
+   leaves them, differ from what the daemon last built successfully, which
+   the manifest records. So a failed reload is retried, and an operator's
+   edit of the copy reloads it once. A disabled plugin is left disabled, and
+   its copy is still refreshed. A file a pre-#33 copy held that the copy no
+   longer lists (its README.md) is left for uninstall to remove. If a plugin
+   is registered from a copy an earlier install recorded elsewhere (the data
+   directory moved), install refuses: uninstall first. Two directories
+   declaring one plugin id are refused too, before anything is written. A
+   failed daemon call stops the install before the next plugin; a re-run
+   retries it. The dry run prints the daemon call the run will make for each
+   plugin.
 9. **The manifest** (below), plus NOTICE, `pstack-provenance.json` and every
    license file of `skills/`, with the repository's own `LICENSE`, under the
    data directory, so attribution travels with the install.

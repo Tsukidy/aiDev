@@ -1,5 +1,5 @@
-// The Paseo plugins step of install and uninstall (#33, #39): every plugin of
-// the repo (repoPlugins), each registered from its own copy. Shaped like a
+// The Paseo plugins step of install and uninstall (#33, #39): the plugins
+// listed in PASEO_PLUGIN_DIRS, each registered from its own copy. Shaped like a
 // runtime target (targets.mjs), but runtime-neutral and outside that registry:
 //
 //   preconditions(m, report)  install's read-only checks: each plugin's id and
@@ -24,18 +24,10 @@
 // package.json lists, nothing installed beside them, and the plugin is recorded
 // before the daemon is asked.
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { REPO, findOnPath, ownedFileAction, placeOwnedFile, run, sha256 } from './aidev-install.mjs';
+import { PASEO_PLUGIN_DIRS, findOnPath, ownedFileAction, placeOwnedFile, run, sha256 } from './aidev-install.mjs';
 import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
-
-const EXTENSIONS_SRC = join(REPO, 'personal-extensions');
-
-export const repoPlugins = () =>
-	readdirSync(EXTENSIONS_SRC)
-		.sort()
-		.map((d) => join(EXTENSIONS_SRC, d))
-		.filter((d) => existsSync(join(d, 'paseo-plugin.json')));
 
 // The daemon's plugin registrations as { id, path, status }, or null when the
 // daemon does not answer (`paseo plugin ls --json`). `path` is the directory
@@ -100,7 +92,7 @@ export function pluginsStep(ctx) {
 
 	return {
 		preconditions(m, report) {
-			plugins = repoPlugins().map((dir) => {
+			plugins = PASEO_PLUGIN_DIRS.map((dir) => {
 				const source = (name) => join(dir, name);
 				const id = JSON.parse(readFileSync(source('paseo-plugin.json'), 'utf8')).id;
 				const copy = join(ctx.dataDir, 'paseo-plugins', id);
