@@ -2,9 +2,11 @@
 // listed in PASEO_PLUGIN_DIRS, each registered from its own copy. Shaped like a
 // runtime target (targets.mjs), but runtime-neutral and outside that registry:
 //
-//   preconditions(m, report)  install's read-only checks: each plugin's id and
-//                             file list, the daemon's plugin list, a
-//                             registration from a copy that has since moved
+//   preconditions(m, report)  install's read-only checks: each listed plugin's
+//                             paseo-plugin.json and package.json (readable
+//                             JSON, a plain-name id, a file list; readPlugin),
+//                             no id declared twice, the daemon's plugin list,
+//                             a registration from a copy that has since moved
 //   paths()                   every path it writes (after preconditions)
 //   plan(m)                   → one { step, ... } per plugin (step: see pluginStep)
 //   describe(plans)           its lines, printed by --dry-run
@@ -75,15 +77,39 @@ export function describeStep(step) {
 	return `plugin ${step.id}: copy to ${step.path}, then ${call ? `paseo plugin ${call(step).join(' ')}` : `no daemon call (Paseo reports it ${step.status})`}`;
 }
 
+// One path segment: what a plugin id and a "files" entry must be, since
+// each names something inside a directory.
+export const plainName = (name) => typeof name === 'string' && name === basename(name) && name !== '' && name !== '.' && name !== '..';
+
 // The "files" entries a copy cannot hold: anything but the plain name of a
 // file in dir (a path, a glob, a directory, a missing file).
 export function invalidFileEntries(listed, dir) {
 	if (!Array.isArray(listed)) return ['(no "files" array)'];
 	return listed.filter((name) => {
-		if (typeof name !== 'string' || name !== basename(name) || name === '.' || name === '..' || /[*?[\]{}!]/.test(name)) return true;
+		if (!plainName(name) || /[*?[\]{}!]/.test(name)) return true;
 		const p = join(dir, name);
 		return !(existsSync(p) && statSync(p).isFile());
 	});
+}
+
+// A listed plugin directory's id (paseo-plugin.json) and the names of the
+// files its copy holds (package.json "files"), or why it cannot be installed.
+export function readPlugin(dir) {
+	const errors = [];
+	const json = (name) => {
+		const p = join(dir, name);
+		try {
+			return JSON.parse(readFileSync(p, 'utf8'));
+		} catch (e) {
+			errors.push(`${p} ${e instanceof SyntaxError ? 'is not valid JSON' : 'cannot be read'}`);
+		}
+	};
+	const meta = json('paseo-plugin.json');
+	const pkg = json('package.json');
+	if (meta !== undefined && !plainName(meta?.id)) errors.push(`${join(dir, 'paseo-plugin.json')} "id" must be a plain name, one path segment: ${JSON.stringify(meta?.id)}`);
+	const bad = pkg === undefined ? [] : invalidFileEntries(pkg?.files, dir);
+	if (bad.length) errors.push(`${join(dir, 'package.json')} "files" must list plain names of files in ${dir}: ${bad.join(', ')}`);
+	return errors.length ? { errors } : { id: meta.id, files: pkg.files };
 }
 
 export function pluginsStep(ctx) {
@@ -92,15 +118,14 @@ export function pluginsStep(ctx) {
 
 	return {
 		preconditions(m, report) {
-			plugins = PASEO_PLUGIN_DIRS.map((dir) => {
-				const source = (name) => join(dir, name);
-				const id = JSON.parse(readFileSync(source('paseo-plugin.json'), 'utf8')).id;
+			plugins = PASEO_PLUGIN_DIRS.flatMap((dir) => {
+				const { id, files, errors } = readPlugin(dir);
+				if (errors) {
+					for (const e of errors) report.error(e);
+					return [];
+				}
 				const copy = join(ctx.dataDir, 'paseo-plugins', id);
-				const listed = JSON.parse(readFileSync(source('package.json'), 'utf8')).files;
-				const bad = invalidFileEntries(listed, dir);
-				if (bad.length) report.error(`${source('package.json')} "files" must list plain names of files in ${dir}: ${bad.join(', ')}`);
-				const files = bad.length ? [] : listed.map((name) => ({ path: join(copy, name), content: readFileSync(source(name)) }));
-				return { id, dir, copy, files };
+				return [{ id, dir, copy, files: files.map((name) => ({ path: join(copy, name), content: readFileSync(join(dir, name)) })) }];
 			});
 			for (const [id, same] of Map.groupBy(plugins, (p) => p.id)) {
 				if (same.length > 1) report.error(`plugin id ${id} is declared by more than one paseo-plugin.json: ${same.map((p) => p.dir).join(', ')}`);

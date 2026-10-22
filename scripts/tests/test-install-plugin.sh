@@ -421,4 +421,20 @@ check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
 rm -r "$twin"
 list_plugins test-fixture-plugin
 
+# --- a listed plugin whose paseo-plugin.json is not JSON is refused before anything is written (#39)
+
+broken=$two/main/personal-extensions/test-fixture-broken
+cp -r "$fixture" "$broken"
+printf '{"id": "%s"\n' "$fixture_id" >"$broken/paseo-plugin.json"
+list_plugins test-fixture-plugin test-fixture-broken
+sb=$(new_sandbox two-plugins-bad-metadata)
+before=$(snapshot "$sb/home")
+two_install "$sb"
+check "install with a listed plugin whose paseo-plugin.json is not JSON exits nonzero" test $? -ne 0
+check "it names the file" out_has "$sb" "error: $broken/paseo-plugin.json is not valid JSON"
+check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
+rm -r "$broken"
+list_plugins test-fixture-plugin
+
 summary
