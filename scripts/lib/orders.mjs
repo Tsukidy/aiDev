@@ -109,7 +109,16 @@ export function ordersStep(ctx) {
 			const state = recordCaptain(m);
 			for (const o of ORDERS) {
 				const pre = readText(captain) ?? '';
-				if (!ourBlock(m, o.block) && !blockRange(pre, o.block)) add(m, markedBlockIntent(captain, o.block, pre));
+				const ours = ourBlock(m, o.block);
+				if (!blockRange(pre, o.block)) {
+					// An intent a killed run left is anchored again at what the file
+					// holds now: what came in since (the operator's line, an upgrade of
+					// the block before) is not the script's to be removed with its
+					// block. One anchored at an empty file the install created stays:
+					// what precedes the block then is the header the script wrote.
+					if (!ours) add(m, markedBlockIntent(captain, o.block, pre));
+					else if (ours.at && !(ours.at.length === 0 && !state.existed)) replace(m, ours, markedBlockIntent(captain, o.block, pre));
+				}
 				for (const p of o.creates(mateHome)) if (!lexists(p)) ensure(m, beadsDbItem(p), (i) => i.path === p);
 				checkpoint();
 				const r = run(ctx, 'bash', [o.script]);

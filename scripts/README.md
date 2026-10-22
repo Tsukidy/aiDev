@@ -132,10 +132,12 @@ what `bd init` creates in the mate's home. An orders block is recorded as an
 intent to append it: the length and hash of the text the file held. After the
 call, records of what it did not create are dropped, and a block's record is
 settled with the text the script put in front of it. A re-run settles an
-intent a killed run left the same way. So a re-run knows the skills a killed
-run copied as ours, and uninstall after a kill at any call restores the
-pre-install state. `tests/test-install-interrupt.sh` kills the install at
-each such call.
+intent a killed run left the same way, anchored again at what the file holds
+when its script runs, so a line the operator added since, or an upgrade of
+the block before, is not taken for the script's and removed with the block.
+So a re-run knows the skills a killed run copied as ours, and uninstall after
+a kill at any call restores the pre-install state. `tests/test-install-interrupt.sh`
+kills the install at each such call.
 
 What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
