@@ -115,7 +115,8 @@ touches nothing.
    A file a pre-#33 copy held that the copy no longer lists (its README.md)
    is left for uninstall to remove. If a plugin is registered from a copy an
    earlier install recorded elsewhere (the data directory moved), install
-   refuses: uninstall first. A failed daemon call stops the install before
+   refuses: uninstall first. Two directories declaring one plugin id are
+   refused too, before anything is written. A failed daemon call stops the install before
    the next plugin; a re-run retries it. The dry run prints the daemon call
    the run will make for each plugin.
 9. **The manifest** (below), plus NOTICE, `pstack-provenance.json` and every

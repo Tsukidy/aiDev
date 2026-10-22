@@ -404,4 +404,17 @@ killed_at_second "killed at the second plugin's install" "STUB_INTERRUPT=paseo-i
 killed_at_second "killed once the second plugin is recorded" "AIDEV_TEST_KILL=record ~/.local/share/aidev/paseo-plugins/$fixture_id/index.server.ts" \
 	first_installed second_installed
 
+# --- two plugin directories of one id are refused before anything is written (#39) ------------
+
+twin=$two/main/personal-extensions/test-fixture-twin
+cp -r "$fixture" "$twin"
+sb=$(new_sandbox two-plugins-one-id)
+before=$(snapshot "$sb/home")
+two_install "$sb"
+check "install with two directories of one plugin id exits nonzero" test $? -ne 0
+check "it names the id and both directories" out_has "$sb" "plugin id $fixture_id is declared by more than one paseo-plugin.json: $fixture, $twin"
+check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
+rm -r "$twin"
+
 summary

@@ -110,8 +110,12 @@ export function pluginsStep(ctx) {
 				const bad = invalidFileEntries(listed, dir);
 				if (bad.length) report.error(`${source('package.json')} "files" must list plain names of files in ${dir}: ${bad.join(', ')}`);
 				const files = bad.length ? [] : listed.map((name) => ({ path: join(copy, name), content: readFileSync(source(name)) }));
-				return { id, copy, files };
+				return { id, dir, copy, files };
 			});
+			// Two directories of one id would share one copy and one registration.
+			for (const [id, same] of Map.groupBy(plugins, (p) => p.id)) {
+				if (same.length > 1) report.error(`plugin id ${id} is declared by more than one paseo-plugin.json: ${same.map((p) => p.dir).join(', ')}`);
+			}
 			if (findOnPath('paseo', ctx.env)) {
 				registered = daemonPlugins(ctx);
 				if (!registered) report.error('`paseo plugin ls --json` failed — is the Paseo daemon running?');
