@@ -81,6 +81,7 @@ export function onboardingSkipList(ctx) {
 		if (action === 'current') return `${root} is on the beads onboarding skip list ${path} already`;
 		return `${path} already lists ${root} (the operator's entry) — left as is`;
 	};
+	const unreadable = `${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`;
 	const read = (m) => {
 		const text = readText(path);
 		const record = ours(m);
@@ -91,7 +92,7 @@ export function onboardingSkipList(ctx) {
 		path,
 
 		preconditions(report) {
-			if (lexists(path) && readText(path) === null) report.error(`${path} (the beads onboarding skip list) is not a readable file — fix or remove it and re-run`);
+			if (lexists(path) && readText(path) === null) report.error(unreadable);
 		},
 
 		plan: (m) => ({ action: read(m).action }),
@@ -105,8 +106,12 @@ export function onboardingSkipList(ctx) {
 		// find. Our entry, deleted since, comes back (as our hook entry does).
 		install(m, report, checkpoint) {
 			const { action, record, text } = read(m);
+			if (text === null && lexists(path)) {
+				report.error(unreadable);
+				return false;
+			}
 			report.say(describe({ action }));
-			if (action !== 'add') return;
+			if (action !== 'add') return true;
 			const next = appendEntry(text, root);
 			const item = skipEntryItem(path, root, text !== null && (record?.existedBefore ?? true), next.before);
 			if (record) replace(m, record, item);
@@ -114,6 +119,7 @@ export function onboardingSkipList(ctx) {
 			mkdirSync(dirname(path), { recursive: true });
 			checkpoint();
 			writeShared(path, next.text);
+			return true;
 		},
 
 		reversePlan: (m) => items(m, 'skip-entry').map((i) => `remove ${i.entry} from the beads onboarding skip list ${i.path}`),

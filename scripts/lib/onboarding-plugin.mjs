@@ -8,9 +8,9 @@
 //   paths()                   every path it writes (after preconditions)
 //   plan(m)                   → { step, skip, ... } (step: see pluginStep)
 //   describe(plan)            its lines, printed by --dry-run
-//   install(m, plan, report, checkpoint)  add this checkout to the skip list,
-//                             place the copy, record the plugin, make the
-//                             step's daemon call
+//   install(m, plan, report, checkpoint)  add this checkout to the skip list;
+//                             once it is listed, place the copy, record the
+//                             plugin, make the step's daemon call
 //   reversePreconditions(m, report, dryRun)  uninstall's checks: paseo and the
 //                             daemon's plugin list, when a plugin is recorded
 //   reversePlan(m)            uninstall's --dry-run lines
@@ -134,7 +134,7 @@ export function onboardingPlugin(ctx) {
 		describe: (plan) => [skip.describe(plan.skip), describeStep(plan.step)],
 
 		install(m, { step, planned, record, buildSha256 }, report, checkpoint) {
-			skip.install(m, report, checkpoint);
+			if (!skip.install(m, report, checkpoint)) return;
 			report.say(describeStep(step));
 			if (step.kind === 'foreign') return;
 			// Recorded, and checkpointed, before the daemon is asked: a failed

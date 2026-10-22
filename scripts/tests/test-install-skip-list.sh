@@ -236,4 +236,19 @@ check "install over a list that comes to name this checkout during the run exits
 check "that entry is the operator's: none of ours is added" test "$(entries "$sb")" = "$(printf '/opt/scratch\n%s' "$repo")"
 check "and none is recorded" not recorded "$sb"
 
+# A list that stops being readable during the run is refused at the write:
+# nothing of ours is written or recorded, and the plugin is not registered.
+sb=$(new_sandbox skip-unreadable-mid-run)
+mkdir -p "$(dirname "$(skip_list_of "$sb")")"
+printf '/opt/scratch\n' >"$(skip_list_of "$sb")"
+run_in "$sb" full STUB_SKIP_MODE=000 -- "$installer"
+check "install over a list made unreadable during the run exits nonzero" test $? -ne 0
+check "the refusal names the skip list" out_has "$sb" "error: $(skip_list_of "$sb") (the beads onboarding skip list) is not a readable file"
+check "nothing is recorded" not recorded "$sb"
+check "the plugin is not registered" plugin_status_is "$sb" ""
+chmod 600 "$(skip_list_of "$sb")"
+check "the operator's list is left as it was" test "$(cat "$(skip_list_of "$sb")")" = /opt/scratch
+uninstall_in "$sb" --purge --yes
+check "uninstall then leaves the operator's list" test "$(cat "$(skip_list_of "$sb")")" = /opt/scratch
+
 summary
