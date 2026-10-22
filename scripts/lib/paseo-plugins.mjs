@@ -6,7 +6,8 @@
 //                             paseo-plugin.json and package.json (readable
 //                             JSON, a plain-name id, a file list; readPlugin),
 //                             no id declared twice, the daemon's plugin list,
-//                             a registration from a copy that has since moved
+//                             a registration from a copy that has since moved;
+//                             it warns of a recorded plugin no longer listed
 //   paths()                   every path it writes (after preconditions)
 //   plan(m)                   → one { step, ... } per plugin (step: see pluginStep)
 //   describe(plans)           its lines, printed by --dry-run
@@ -129,6 +130,9 @@ export function pluginsStep(ctx) {
 			});
 			for (const [id, same] of Map.groupBy(plugins, (p) => p.id)) {
 				if (same.length > 1) report.error(`plugin id ${id} is declared by more than one paseo-plugin.json: ${same.map((p) => p.dir).join(', ')}`);
+			}
+			for (const { id, path } of m ? items(m, 'plugin') : []) {
+				if (!plugins.some((p) => p.id === id)) report.warn(`plugin ${id} (copy ${path}) is recorded but no longer listed in PASEO_PLUGIN_DIRS — install leaves it as is; uninstall removes it`);
 			}
 			if (findOnPath('paseo', ctx.env)) {
 				registered = daemonPlugins(ctx);

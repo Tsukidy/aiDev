@@ -437,4 +437,25 @@ check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
 rm -r "$broken"
 list_plugins test-fixture-plugin
 
+# --- a recorded plugin no longer listed is left registered, with a warning, until uninstall (#39)
+
+sb=$(new_sandbox two-plugins-unlisted)
+before=$(snapshot "$sb/home")
+two_install "$sb"
+list_plugins
+: >"$sb/stub.log"
+two_install "$sb"
+status=$?
+check "a re-run with a recorded plugin no longer listed exits 0" test "$status" -eq 0
+[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+check "it warns that the plugin stays until uninstall" \
+	out_has "$sb" "warning: plugin $fixture_id (copy $(plugin_copy "$sb" "$fixture_id")) is recorded but no longer listed in PASEO_PLUGIN_DIRS — install leaves it as is; uninstall removes it"
+check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "the unlisted plugin is still running" plugin_status_is "$sb" running "$fixture_id"
+two_uninstall "$sb"
+check "uninstall with the plugin unlisted exits 0" test $? -eq 0
+check "uninstall still removes the unlisted plugin's registration" bash -c '[ "$(cat "$1")" = "[]" ]' _ "$sb/state/paseo-plugins.json"
+check "install → unlist → re-run → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+list_plugins test-fixture-plugin
+
 summary
