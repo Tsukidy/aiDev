@@ -7,7 +7,8 @@
 // its line rule is entries()'s. Its match is sameDir()'s for a path that
 // exists; for one that does not, realResolve() real-paths the longest existing
 // prefix and the plugin only path.resolve()s it. Such an entry can never name
-// this checkout, which exists, so the two agree on whether it is listed.
+// this checkout, which exists, so the two agree on whether this checkout is
+// listed.
 //
 // The install adds this checkout's root, so the plugin never onboards the
 // skill source itself; the entry is recorded before it is written, and the
@@ -99,11 +100,12 @@ export function onboardingSkipList(ctx) {
 
 		describe,
 
-		// Planned again from the list as it is now, so a line the operator
-		// added since the plan read it is kept and counts. Recorded, and its
-		// directory created, before the checkpoint that precedes the write,
-		// so an interrupted run leaves no entry or directory uninstall cannot
-		// find. Our entry, deleted since, comes back (as our hook entry does).
+		// Read afresh, so a line the operator added since the plan is kept
+		// and counts. The entry is recorded, and the list's directory created
+		// before the checkpoint, which records it, so an interrupted write
+		// leaves nothing uninstall cannot find. Our entry, deleted since,
+		// comes back. Returns whether this checkout is listed: the plugin is
+		// registered only when it is.
 		install(m, report, checkpoint) {
 			const { action, record, text } = read(m);
 			if (text === null && lexists(path)) {
