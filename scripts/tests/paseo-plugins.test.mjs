@@ -1,13 +1,13 @@
-// The onboarding plugin step's decision table (lib/onboarding-plugin.mjs,
+// The Paseo plugins step's decision table (lib/paseo-plugins.mjs,
 // #33), called directly: which daemon call each registration needs, and the
 // line that names it. The sandbox cases of test-install-plugin.sh drive the
 // same step end to end.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { describeStep, invalidFileEntries, pluginStep, registrationOf } from '../lib/onboarding-plugin.mjs';
+import { describeStep, invalidFileEntries, plainName, pluginStep, readPlugin, registrationOf } from '../lib/paseo-plugins.mjs';
 
 const id = 'firstmate-beads-onboarding';
 const copy = '/home/u/.local/share/aidev/paseo-plugins/firstmate-beads-onboarding';
@@ -69,6 +69,40 @@ test('invalidFileEntries: only plain names of existing files pass', () => {
 			7,
 		]);
 		assert.deepEqual(invalidFileEntries(undefined, dir), ['(no "files" array)']);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('plainName: one path segment, so an id names a directory inside the copies', () => {
+	assert.deepEqual(
+		['firstmate-beads-onboarding', 'a.b', '', '.', '..', 'a/b', '../x', 'a/', '/abs', 7, null, undefined].map(plainName),
+		[true, true, false, false, false, false, false, false, false, false, false, false],
+	);
+});
+
+test('readPlugin: the id and files, or each reason the directory cannot be installed', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'read-plugin-'));
+	const put = (name, text) => writeFileSync(join(dir, name), text);
+	const meta = join(dir, 'paseo-plugin.json');
+	const pkg = join(dir, 'package.json');
+	try {
+		assert.deepEqual(readPlugin(dir), { errors: [`${meta} cannot be read`, `${pkg} cannot be read`] });
+		put('index.server.ts', '');
+		put('package.json', '{"files": ["index.server.ts"]}');
+		put('paseo-plugin.json', '{"id": "fixture"');
+		assert.deepEqual(readPlugin(dir), { errors: [`${meta} is not valid JSON`] });
+		for (const [text, shown] of [['{}', 'undefined'], ['null', 'undefined'], ['{"id": 7}', '7'], ['{"id": "../x"}', '"../x"'], ['{"id": ".."}', '".."']]) {
+			put('paseo-plugin.json', text);
+			assert.deepEqual(readPlugin(dir), { errors: [`${meta} "id" must be a plain name, one path segment: ${shown}`] }, text);
+		}
+		put('paseo-plugin.json', '{"id": "fixture"}');
+		assert.deepEqual(readPlugin(dir), { id: 'fixture', files: [{ name: 'index.server.ts', content: Buffer.from('') }] });
+		chmodSync(join(dir, 'index.server.ts'), 0o000);
+		assert.deepEqual(readPlugin(dir), { errors: [`${join(dir, 'index.server.ts')} cannot be read`] });
+		chmodSync(join(dir, 'index.server.ts'), 0o644);
+		put('package.json', '{}');
+		assert.deepEqual(readPlugin(dir), { errors: [`${pkg} "files" must list plain names of files in ${dir}: (no "files" array)`] });
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

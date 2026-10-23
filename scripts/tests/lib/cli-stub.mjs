@@ -7,7 +7,8 @@
 // plus paseo-build (every plugin build fails). STUB_INTERRUPT lists
 // `<name>-<command>` calls that, once done (a plugin install or reload once
 // the daemon has built the plugin and saved its status), SIGKILL install.mjs
-// and every process between it and the stub, as Ctrl-C would;
+// and every process between it and the stub, as Ctrl-C would; a paseo entry
+// may name one plugin, as paseo-install:<id>, to kill only at its call;
 // skills-add-partway copies the first half of the skills asked for, writes
 // the lock for those, then kills. The build applies the plugin's own
 // host-supplied rule.
@@ -44,8 +45,8 @@ function killInstaller() {
 	throw new Error("install.mjs is not among the stub's ancestors");
 }
 
-const exit = (call, code) => {
-	if (interrupts.includes(call)) killInstaller();
+const exit = (call, code, id) => {
+	if (interrupts.includes(call) || (id && interrupts.includes(`${call}:${id}`))) killInstaller();
 	process.exit(code);
 };
 
@@ -111,34 +112,34 @@ if (name === 'paseo') {
 	const [group, cmd, arg] = args;
 	if (group !== 'plugin') process.exit(64);
 	if (fail.includes(`paseo-${cmd}`)) process.exit(1);
+	const id = cmd === 'install' ? JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id : arg;
 	const builds = (dir) => !fail.includes('paseo-build') && imports(readFileSync(join(dir, 'index.server.ts'), 'utf8')).every(hostSupplied);
 	const start = (p) => {
 		p.status = builds(p.path) ? 'running' : 'failed';
 		save();
-		if (p.status === 'failed') exit(`paseo-${cmd}`, 1);
+		if (p.status === 'failed') exit(`paseo-${cmd}`, 1, id);
 	};
 	if (cmd === 'ls') {
 		process.stdout.write(JSON.stringify(plugins));
 	} else if (cmd === 'install') {
-		const id = JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id;
 		if (plugins.some((p) => p.id === id)) process.exit(1);
 		plugins.push({ id, path: arg });
 		start(plugins.at(-1));
 	} else if (cmd === 'remove') {
-		const i = plugins.findIndex((p) => p.id === arg);
+		const i = plugins.findIndex((p) => p.id === id);
 		if (i < 0) process.exit(1);
 		plugins.splice(i, 1);
 		save();
 	} else if (cmd === 'reload') {
-		const p = plugins.find((x) => x.id === arg);
+		const p = plugins.find((x) => x.id === id);
 		if (!p) process.exit(1);
 		if (p.status === 'disabled') {
-			console.error(`Plugin is disabled: ${arg}`);
+			console.error(`Plugin is disabled: ${id}`);
 			process.exit(1);
 		}
 		start(p);
 	} else process.exit(64);
-	exit(`paseo-${cmd}`, 0);
+	exit(`paseo-${cmd}`, 0, id);
 }
 
 if (name === 'bd') {

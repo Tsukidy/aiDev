@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# Tests for the onboarding plugin step of install.mjs and uninstall.mjs (#33):
+# Tests for the Paseo plugins step of install.mjs and uninstall.mjs (#33):
 # the daemon call install makes for the plugin's registration, and that
 # uninstall takes back exactly ours, against the stub daemon of
 # lib/cli-stub.mjs, which, like Paseo, registers a plugin before building it
-# and keeps it, as failed, when the build fails. On the shared harness of
-# lib/install-harness.sh; fully offline.
+# and keeps it, as failed, when the build fails. A copy of this checkout that
+# lists a second, fixture plugin shows the step over more than one plugin
+# (#39). On the shared harness of lib/install-harness.sh; fully offline.
 #
 # Usage: tests/test-install-plugin.sh
 
@@ -284,5 +285,184 @@ run_in "$sb" full XDG_DATA_HOME="$sb/home/.local/share-moved" -- "$uninstaller" 
 check "uninstall under another XDG_DATA_HOME exits 0" test $? -eq 0
 check "it removes the registration from the recorded copy" plugin_status_is "$sb" ""
 check "it restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
+# --- a second listed plugin is installed, converges and uninstalls with the first (#39) ------
+#
+# From a git copy of this checkout with a fixture plugin added under its
+# personal-extensions/ and listed after the beads onboarding plugin.
+
+fixture_id=aidev-fixture-plugin
+two=$tmp/two-plugins
+check "the checkout copies for the two-plugin cases" git_copy_with_worktree "$two"
+fixture=$two/main/personal-extensions/test-fixture-plugin
+mkdir -p "$fixture"
+printf '{"id": "%s"}\n' "$fixture_id" >"$fixture/paseo-plugin.json"
+printf '{"name": "test-fixture-plugin", "private": true, "type": "module", "files": ["index.server.ts", "paseo-plugin.json", "package.json"]}\n' >"$fixture/package.json"
+printf 'import { join } from "node:path";\nexport default { name: join("aidev", "fixture") };\n' >"$fixture/index.server.ts"
+printf 'not in the files list\n' >"$fixture/README.md"
+
+# The copy's PASEO_PLUGIN_DIRS: the beads onboarding plugin, then the given
+# directories of its personal-extensions/.
+list_plugins() { # list_plugins [dir ...]
+	local lib=$two/main/scripts/lib/aidev-install.mjs dirs=ONBOARDING_PLUGIN_DIR d
+	for d in "$@"; do dirs+=", join(REPO, 'personal-extensions', '$d')"; done
+	sed -i "s|^export const PASEO_PLUGIN_DIRS = \[.*\];\$|export const PASEO_PLUGIN_DIRS = [$dirs];|" "$lib"
+	grep -qxF "export const PASEO_PLUGIN_DIRS = [$dirs];" "$lib" || { echo "list_plugins: the PASEO_PLUGIN_DIRS line moved; update this helper" >&2; return 1; }
+}
+check "the checkout copy lists the fixture plugin" list_plugins test-fixture-plugin
+
+two_install() { run_in "$1" full "${@:2}" -- "$two/main/scripts/install.mjs"; } # two_install <sb> [VAR=value ...]
+two_uninstall() { run_in "$1" full -- "$two/main/scripts/uninstall.mjs" --purge --yes; }
+
+first_installed() { printf 'plugin install %s\n' "$(plugin_copy "$1")"; }
+second_installed() { printf 'plugin install %s\n' "$(plugin_copy "$1" "$fixture_id")"; }
+second_reloaded() { printf 'plugin reload %s\n' "$fixture_id"; }
+both_installed() { first_installed "$1" && second_installed "$1"; }
+
+both_running() { plugin_status_is "$1" running && plugin_status_is "$1" running "$fixture_id"; }
+
+plugin_records() { # plugin_records <sb>
+	node -e '
+		const [file, home] = process.argv.slice(1);
+		const m = JSON.parse(require("fs").readFileSync(file, "utf8"));
+		console.log(m.items.filter((i) => i.kind === "plugin").map((i) => JSON.stringify(i).replaceAll(home, "~")).join("\n"));
+	' "$(manifest_of "$1")" "$1/home"
+}
+
+step_order() { # step_order <sb>
+	grep -oE "to the beads onboarding skip list|plugin ($plugin_id|$fixture_id): copy to" "$1/out.txt"
+}
+expected_order=$(printf '%s\n' "to the beads onboarding skip list" "plugin $plugin_id: copy to" "plugin $fixture_id: copy to")
+
+sb=$(new_sandbox two-plugins)
+before=$(snapshot "$sb/home")
+run_in "$sb" full -- "$two/main/scripts/install.mjs" --dry-run
+check "the dry run names the skip-list entry, then each plugin's install, in order" test "$(step_order "$sb")" = "$expected_order"
+check "the dry run names the second plugin's daemon call" out_has "$sb" "plugin $fixture_id: copy to $(plugin_copy "$sb" "$fixture_id"), then paseo plugin install $(plugin_copy "$sb" "$fixture_id")"
+two_install "$sb"
+status=$?
+check "install with two plugins listed exits 0" test "$status" -eq 0
+[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+check "install lists this checkout on the skip list before it installs either plugin" test "$(step_order "$sb")" = "$expected_order"
+check "install makes one daemon call per plugin, in order" test "$(plugin_calls "$sb")" = "$(both_installed "$sb")"
+check "the stub daemon runs both plugins" both_running "$sb"
+check "the second plugin's copy holds the files its package.json lists, and only those" \
+	test "$(ls "$(plugin_copy "$sb" "$fixture_id")")" = "$(printf '%s\n' index.server.ts package.json paseo-plugin.json)"
+check "the manifest records both plugins, each from its copy, with its build" \
+	manifest_true "$sb" "JSON.stringify(m.items.filter((i) => i.kind === 'plugin').map((i) => [i.id, i.path, typeof i.buildSha256])) === JSON.stringify([['$plugin_id', '$(plugin_copy "$sb")', 'string'], ['$fixture_id', '$(plugin_copy "$sb" "$fixture_id")', 'string']])"
+two_records=$(plugin_records "$sb")
+manifest=$(cat "$(manifest_of "$sb")")
+: >"$sb/stub.log"
+two_install "$sb"
+check "a re-run with two plugins exits 0" test $? -eq 0
+check "the re-run makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "the re-run leaves the manifest byte-identical" test "$(cat "$(manifest_of "$sb")")" = "$manifest"
+run_in "$sb" full -- "$two/main/scripts/uninstall.mjs" --dry-run
+check "the uninstall dry run names the second plugin's removal" out_has "$sb" "paseo plugin remove $fixture_id, if Paseo lists it from $(plugin_copy "$sb" "$fixture_id")"
+: >"$sb/stub.log"
+two_uninstall "$sb"
+check "uninstall with two plugins exits 0" test $? -eq 0
+check "uninstall removes both registrations" test "$(plugin_calls "$sb")" = "$(printf 'plugin remove %s\n' "$plugin_id" "$fixture_id")"
+check "the stub daemon lists neither plugin" bash -c '[ "$(cat "$1")" = "[]" ]' _ "$sb/state/paseo-plugins.json"
+check "install → re-run → uninstall with two plugins restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
+# --- an install with two plugins killed at the second converges --------------------------------
+
+# killed_at_second <label> <VAR=value> <calls before the kill> <the re-run's calls>
+# Each calls argument names one of the functions above, given the sandbox.
+killed_at_second() {
+	local label=$1 kill=$2 at_kill=$3 rerun_calls=$4 slug=${1//[^A-Za-z0-9-]/-} sb before status
+	for run in uninstall rerun; do
+		sb=$(new_sandbox "two-$slug-$run")
+		before=$(snapshot "$sb/home")
+		(two_install "$sb" "$kill") 2>/dev/null # the shell's "Killed" notice
+		check "$label ($run): the install was killed" test $? -ne 0
+		check "$label ($run): after the first plugin's call" test "$(plugin_calls "$sb")" = "$("$at_kill" "$sb")"
+		check "$label ($run): the second plugin was recorded before its call" manifest_true "$sb" "m.items.some((i) => i.kind === 'plugin' && i.id === '$fixture_id' && !i.buildSha256)"
+		if [ "$run" = rerun ]; then
+			: >"$sb/stub.log"
+			two_install "$sb"
+			status=$?
+			check "$label ($run): the re-run exits 0" test "$status" -eq 0
+			[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+			check "$label ($run): the re-run makes the second plugin's call" test "$(plugin_calls "$sb")" = "$("$rerun_calls" "$sb")"
+			check "$label ($run): the re-run finds the copy as recorded, not edited" bash -c '! grep -qF "modified since install" "$1"' _ "$sb/out.txt"
+			check "$label ($run): both plugins run" both_running "$sb"
+			check "$label ($run): the re-run records the plugins an uninterrupted install does" test "$(plugin_records "$sb")" = "$two_records"
+			: >"$sb/stub.log"
+			two_install "$sb"
+			check "$label ($run): the run after that makes no daemon call" test -z "$(plugin_calls "$sb")"
+		fi
+		two_uninstall "$sb"
+		status=$?
+		check "$label ($run): uninstall exits 0" test "$status" -eq 0
+		[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+		check "$label ($run): uninstall leaves neither plugin registered" bash -c '[ "$(cat "$1")" = "[]" ]' _ "$sb/state/paseo-plugins.json"
+		check "$label ($run): uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+	done
+}
+
+killed_at_second "killed at the second plugin's install" "STUB_INTERRUPT=paseo-install:$fixture_id" both_installed second_reloaded
+killed_at_second "killed once the second plugin is recorded" "AIDEV_TEST_KILL=record ~/.local/share/aidev/paseo-plugins/$fixture_id/index.server.ts" \
+	first_installed second_installed
+
+# --- two plugin directories of one id are refused before anything is written (#39) ------------
+
+twin=$two/main/personal-extensions/test-fixture-twin
+cp -r "$fixture" "$twin"
+list_plugins test-fixture-plugin test-fixture-twin
+sb=$(new_sandbox two-plugins-one-id)
+before=$(snapshot "$sb/home")
+two_install "$sb"
+check "install with two directories of one plugin id exits nonzero" test $? -ne 0
+check "it names the id and both directories" out_has "$sb" "plugin id $fixture_id is declared by more than one paseo-plugin.json: $fixture, $twin"
+check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
+rm -r "$twin"
+list_plugins test-fixture-plugin
+
+# --- a listed plugin whose paseo-plugin.json is not JSON is refused before anything is written (#39)
+
+broken=$two/main/personal-extensions/test-fixture-broken
+cp -r "$fixture" "$broken"
+printf '{"id": "%s"\n' "$fixture_id" >"$broken/paseo-plugin.json"
+list_plugins test-fixture-plugin test-fixture-broken
+sb=$(new_sandbox two-plugins-bad-metadata)
+before=$(snapshot "$sb/home")
+two_install "$sb"
+check "install with a listed plugin whose paseo-plugin.json is not JSON exits nonzero" test $? -ne 0
+check "it names the file" out_has "$sb" "error: $broken/paseo-plugin.json is not valid JSON"
+check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "it writes nothing" test "$(snapshot "$sb/home")" = "$before"
+rm -r "$broken"
+list_plugins test-fixture-plugin
+
+# --- a recorded plugin no longer listed is left registered, with a warning, until uninstall (#39)
+
+sb=$(new_sandbox two-plugins-unlisted)
+before=$(snapshot "$sb/home")
+two_install "$sb"
+list_plugins
+: >"$sb/stub.log"
+two_install "$sb"
+status=$?
+check "a re-run with a recorded plugin no longer listed exits 0" test "$status" -eq 0
+[ "$status" -eq 0 ] || sed 's/^/    | /' "$sb/out.txt"
+check "it warns that the plugin stays until uninstall" \
+	out_has "$sb" "warning: plugin $fixture_id (copy $(plugin_copy "$sb" "$fixture_id")) is recorded but no longer listed in PASEO_PLUGIN_DIRS — install leaves it as is; uninstall removes it"
+check "it makes no daemon call" test -z "$(plugin_calls "$sb")"
+check "the unlisted plugin is still running" plugin_status_is "$sb" running "$fixture_id"
+list_plugins test-fixture-plugin
+chmod 000 "$fixture/index.server.ts"
+two_install "$sb"
+check "a re-run with a listed plugin file it cannot read exits nonzero" test $? -ne 0
+check "it names the file" out_has "$sb" "error: $fixture/index.server.ts cannot be read"
+check "it does not also call the recorded plugin no longer listed" bash -c '! grep -qF "no longer listed" "$1"' _ "$sb/out.txt"
+chmod 644 "$fixture/index.server.ts"
+two_uninstall "$sb"
+check "uninstall with the plugin unlisted exits 0" test $? -eq 0
+check "uninstall still removes the unlisted plugin's registration" bash -c '[ "$(cat "$1")" = "[]" ]' _ "$sb/state/paseo-plugins.json"
+check "install → unlist → re-run → uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+list_plugins test-fixture-plugin
 
 summary

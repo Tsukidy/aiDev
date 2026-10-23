@@ -11,11 +11,26 @@
 // listed.
 //
 // The install adds this checkout's root, so the plugin never onboards the
-// skill source itself; the entry is recorded before it is written, and the
-// plugin step (onboarding-plugin.mjs) adds it before it registers the plugin.
-// Uninstall removes that one line, after the registration is gone. An entry
-// the operator already has for this checkout is theirs: nothing is added,
-// nothing recorded.
+// skill source itself; the entry is recorded before it is written. Install
+// adds it before the plugins step (paseo-plugins.mjs) registers any plugin,
+// and stops if it cannot; uninstall removes that one line after the
+// registrations are gone. An entry the operator already has for this
+// checkout is theirs: nothing is added, nothing recorded.
+//
+// onboardingSkipList(ctx) is the step, a subset of the plugins step's
+// contract: runtime-neutral, outside the target registry, one path:
+//
+//   preconditions(report)  install's read-only check: the list, if there is
+//                          one, is a readable file
+//   path                   the one path it writes
+//   plan(m)                → { action } (action: see skipAction)
+//   describe(plan)         its line, printed by --dry-run
+//   install(m, report, checkpoint)  read the list afresh; when it needs our
+//                          entry: record it, checkpoint, append it
+//   reversePlan(m)         uninstall's --dry-run lines
+//   reverse(m)             for each recorded entry, take back its line (and
+//                          the list we created, once it holds only what we
+//                          wrote), then the record
 
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -105,16 +120,12 @@ export function onboardingSkipList(ctx) {
 		// and counts. The entry is recorded and the list's directory created
 		// before the checkpoint saves the manifest, so an interrupted write
 		// leaves nothing uninstall cannot find. Our entry, deleted since,
-		// comes back. Returns whether this checkout is listed: the plugin is
-		// registered only when it is.
+		// comes back.
 		install(m, report, checkpoint) {
 			const { action, record, text } = read(m);
-			if (unreadable(text)) {
-				report.error(unreadableError);
-				return false;
-			}
+			if (unreadable(text)) return report.error(unreadableError);
 			report.say(describe({ action }));
-			if (action !== 'add') return true;
+			if (action !== 'add') return;
 			const next = appendEntry(text, root);
 			const item = skipEntryItem(path, root, text !== null && (record?.existedBefore ?? true), next.before);
 			if (record) replace(m, record, item);
@@ -122,7 +133,6 @@ export function onboardingSkipList(ctx) {
 			mkdirSync(dirname(path), { recursive: true });
 			checkpoint();
 			writeShared(path, next.text);
-			return true;
 		},
 
 		reversePlan: (m) => items(m, 'skip-entry').map((i) => `remove ${i.entry} from the beads onboarding skip list ${i.path}`),

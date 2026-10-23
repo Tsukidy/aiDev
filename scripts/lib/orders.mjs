@@ -1,7 +1,7 @@
 // The orders step of install (8a): the two orders installers, each appending
 // its own marked block to the first mate's data/captain.md, the beads one
-// also creating the mate's home memory database. A subset of the onboarding
-// plugin step's contract (onboarding-plugin.mjs): runtime-neutral, outside
+// also creating the mate's home memory database. A subset of the Paseo
+// plugins step's contract (paseo-plugins.mjs): runtime-neutral, outside
 // the target registry, no plan, and nothing to reverse of its own, since
 // uninstall strips the recorded blocks and removes the recorded beads-db
 // paths itself:

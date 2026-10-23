@@ -55,6 +55,9 @@ export const SKILLS_SRC = join(REPO, 'skills');
 export const SKILLS_CLI = 'skills@1.7.4';
 const SKILLS_CLI_MIN_NODE = [22, 20];
 export const ONBOARDING_PLUGIN_DIR = join(REPO, 'personal-extensions', 'paseo-firstmate-beads-onboarding');
+// The repo's Paseo plugins, in install order. A plugin directory is installed
+// only once it is listed here.
+export const PASEO_PLUGIN_DIRS = [ONBOARDING_PLUGIN_DIR];
 
 // --- output and flags ---------------------------------------------------------------
 

@@ -5,8 +5,8 @@
 //
 //   node scripts/uninstall.mjs [--dry-run] [--purge [--yes]]
 //
-// No manifest → refuses, nothing touched. Otherwise, in order: the onboarding
-// plugin's registration from the recorded copy (while the copy still exists),
+// No manifest → refuses, nothing touched. Otherwise, in order: each Paseo
+// plugin's registration from its recorded copy (while the copy still exists),
 // then our entry in the beads onboarding skip list,
 // the skills (through the skills CLI, per runtime target), every file whose
 // whole content is ours (each only while it still holds what was installed;
@@ -36,7 +36,8 @@ import {
 	reverseSharedFile,
 } from './lib/aidev-install.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
-import { onboardingPlugin } from './lib/onboarding-plugin.mjs';
+import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
+import { pluginsStep } from './lib/paseo-plugins.mjs';
 import { targetByName } from './lib/targets.mjs';
 
 const report = makeReport('uninstall');
@@ -56,7 +57,8 @@ const keep = (note) => note && kept.push(note);
 const owned = ownedFiles(m);
 const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
-const plugin = onboardingPlugin(ctx);
+const plugins = pluginsStep(ctx);
+const skipList = onboardingSkipList(ctx);
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -66,7 +68,7 @@ for (const i of m.items) {
 	}
 }
 if (items(m, 'skill').length && !findOnPath('npx', ctx.env)) report.error('npx not found on PATH — needed to remove the skills through the skills CLI');
-plugin.reversePreconditions(m, report, flags['dry-run']);
+plugins.reversePreconditions(m, report, flags['dry-run']);
 if (report.errors.length) report.die('nothing touched');
 
 if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
@@ -80,7 +82,8 @@ if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
 if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
-		...plugin.reversePlan(m),
+		...plugins.reversePlan(m),
+		...skipList.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -97,9 +100,10 @@ const fail = (msg) => {
 	report.die(`${msg}; the manifest keeps what is left — fix and re-run uninstall`);
 };
 
-// --- the onboarding plugin, before its source copy goes -------------------------------
+// --- the Paseo plugins, before their source copies go; then our skip-list entry ------
 
-plugin.reverse(m, fail);
+plugins.reverse(m, fail);
+skipList.reverse(m);
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------

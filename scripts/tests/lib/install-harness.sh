@@ -193,20 +193,21 @@ log_has() { # log_has <sb> <literal>
 	grep -qF -- "$2" "$1/stub.log"
 }
 
-# The onboarding plugin's status in the stub daemon's list ("" when not registered).
-plugin_status_is() { # plugin_status_is <sb> <status>
+# A plugin's status in the stub daemon's list ("" when not registered); the
+# onboarding plugin's unless an id is given.
+plugin_status_is() { # plugin_status_is <sb> <status> [id]
 	node -e '
 		const fs = require("fs");
 		const f = process.argv[1];
 		const list = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : [];
 		const p = list.find((x) => x.id === process.argv[3]);
 		process.exit((p?.status ?? "") === process.argv[2] ? 0 : 1);
-	' "$1/state/paseo-plugins.json" "$2" "$plugin_id"
+	' "$1/state/paseo-plugins.json" "$2" "${3:-$plugin_id}"
 }
 
-# Where install keeps the onboarding plugin's copy.
-plugin_copy() { # plugin_copy <sb>
-	printf '%s\n' "$1/home/.local/share/aidev/paseo-plugins/$plugin_id"
+# Where install keeps a plugin's copy; the onboarding plugin's unless an id is given.
+plugin_copy() { # plugin_copy <sb> [id]
+	printf '%s\n' "$1/home/.local/share/aidev/paseo-plugins/${2:-$plugin_id}"
 }
 
 # The daemon calls that change registrations, as `plugin <verb> <arg>` lines.
