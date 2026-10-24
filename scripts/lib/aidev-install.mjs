@@ -456,8 +456,9 @@ export function placeSharedFile(ctx, m, checkpoint, path, content, format) {
 }
 
 // How each shared-file format is read, stripped of one of our parts,
-// compared and written back. `stripHook` comes from the runtime target that
-// recorded the hook entry.
+// compared and written back. `stripPart(part)` gives the function that takes a
+// JSON part back out: a hook entry's from the runtime target that recorded
+// it, a provider entry's from the crew provider step.
 const CODECS = {
 	text: {
 		parse: (t) => t,
@@ -468,7 +469,7 @@ const CODECS = {
 	},
 	json: {
 		parse: (t) => JSON.parse(t),
-		strip: (v, part, stripHook) => stripHook(part)(v, part),
+		strip: (v, part, stripPart) => stripPart(part)(v, part),
 		same: (a, b) => JSON.stringify(a) === JSON.stringify(b),
 		empty: (v) => Object.keys(v).length === 0,
 		render: (v, like) => jsonLike(v, like),
@@ -479,16 +480,16 @@ const CODECS = {
 // pre-install backup, the backup's exact bytes come back; when the install
 // created the file and nothing else is in it, it goes. Otherwise only our
 // parts are removed and the backup is kept. Returns a "kept" note, or null.
-export function reverseSharedFile(m, path, stripHook) {
+export function reverseSharedFile(m, path, stripPart) {
 	const parts = partsIn(m, path);
 	const rec = sharedFile(m, path);
 	const b = backupOf(m, path);
 	for (const i of [...parts, rec, b]) if (i) drop(m, i);
 	const text = readText(path);
 	if (text === null) return b ? `${b.path} (backup of ${path}, which was deleted after install)` : null;
-	const codec = CODECS[rec?.format ?? (parts.some((p) => p.kind === 'hook-entry') ? 'json' : 'text')];
+	const codec = CODECS[rec?.format ?? (parts.some((p) => p.kind !== 'marked-block') ? 'json' : 'text')];
 	let v = codec.parse(text);
-	for (const part of [...parts].reverse()) v = codec.strip(v, part, stripHook);
+	for (const part of [...parts].reverse()) v = codec.strip(v, part, stripPart);
 	const original = b && existsSync(b.path) ? readFileSync(b.path, 'utf8') : null;
 	if (original !== null && codec.same(codec.parse(original), v)) {
 		writeShared(path, readFileSync(b.path));

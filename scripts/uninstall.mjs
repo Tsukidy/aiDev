@@ -7,7 +7,8 @@
 //
 // No manifest → refuses, nothing touched. Otherwise, in order: each Paseo
 // plugin's registration from its recorded copy (while the copy still exists),
-// then our entry in the beads onboarding skip list,
+// then our entry in the beads onboarding skip list, then the crew provider in
+// Paseo's config.json, followed by `paseo reload`,
 // the skills (through the skills CLI, per runtime target), every file whose
 // whole content is ours (each only while it still holds what was installed;
 // an edited one, like a tuned model sheet, is kept and reported; a replaced
@@ -35,6 +36,7 @@ import {
 	reverseOwnedFile,
 	reverseSharedFile,
 } from './lib/aidev-install.mjs';
+import { crewProvider } from './lib/crew-provider.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
 import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { pluginsStep } from './lib/paseo-plugins.mjs';
@@ -59,6 +61,7 @@ const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
 const plugins = pluginsStep(ctx);
 const skipList = onboardingSkipList(ctx);
+const crew = crewProvider(ctx);
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -84,6 +87,7 @@ if (flags['dry-run']) {
 	const plan = [
 		...plugins.reversePlan(m),
 		...skipList.reversePlan(m),
+		...crew.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -100,10 +104,20 @@ const fail = (msg) => {
 	report.die(`${msg}; the manifest keeps what is left — fix and re-run uninstall`);
 };
 
-// --- the Paseo plugins, before their source copies go; then our skip-list entry ------
+// --- the Paseo plugins, before their source copies go; then our skip-list entry,
+// and the crew provider, which the daemon reloads without -------------------------
 
 plugins.reverse(m, fail);
 skipList.reverse(m);
+{
+	const before = structuredClone(m.items);
+	try {
+		for (const note of crew.reverse(m, report)) keep(note);
+	} catch (e) {
+		m.items = before; // nothing was written; keep its records
+		fail(`cannot strip the crew provider from ${crew.path}: ${e.message}`);
+	}
+}
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------
@@ -130,7 +144,7 @@ saveManifest(ctx, m);
 
 // --- files we share: strip our parts; the backup's bytes when that is all it was --------
 
-for (const p of shared) {
+for (const p of sharedPaths(m)) {
 	const before = structuredClone(m.items);
 	try {
 		keep(reverseSharedFile(m, p, (part) => targetByName(ctx, part.target).stripHookEntry));

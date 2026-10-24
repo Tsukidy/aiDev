@@ -3,7 +3,8 @@
 # Tests for an interrupted install. At an external call that creates state
 # (#35): the skills CLI's add (partway through its copies, and once done), and
 # the beads orders installer's bd calls, which run after the standing-orders
-# installer has appended its block. Each call is SIGKILLed (STUB_INTERRUPT).
+# installer has appended its block, and the daemon's reload of the crew
+# provider (#40). Each call is SIGKILLed (STUB_INTERRUPT).
 # Between the installer's own file writes (#50): after each group of them, and
 # once a write is recorded but not made, at the installer's test kill points
 # (AIDEV_TEST_KILL). Each kill is on a first install. Uninstall then
@@ -88,6 +89,10 @@ interrupted bd-ready STUB_INTERRUPT=bd-ready plain : bd "ready"
 interrupted bd-ready STUB_INTERRUPT=bd-ready rich : bd "ready"
 # bd init has created the mate's home database; its orders block is not appended yet.
 interrupted bd-init STUB_INTERRUPT=bd-init plain : bd "init"
+# The daemon has reloaded config.json with the crew provider (#40); the record
+# still says the reload is owed, so the re-run reloads again.
+interrupted paseo-reload STUB_INTERRUPT=paseo-reload plain : paseo "reload"
+interrupted paseo-reload STUB_INTERRUPT=paseo-reload rich : paseo "reload"
 
 # --- killed between the installer's own writes (#50) -----------------------------
 #
@@ -104,11 +109,12 @@ reran_as_ours() { # reran_as_ours <label> <sb>
 
 # After each group of writes, at its last write: the agents; the routing hook's
 # files and its settings.json entry; the model sheet; the CLAUDE.md block; the
-# license copies. And inside a group, after its first agent.
+# license copies; the crew provider in Paseo's config.json, before its reload.
+# And inside a group, after its first agent.
 agents=$(node -e 'import(process.argv[1]).then((l) => console.log(l.repoAgents().map((a) => a.name).join(" ")))' "$repo/scripts/lib/aidev-install.mjs")
 first_agent=${agents%% *}
 last_agent=${agents##* }
-for file in ".claude/agents/$first_agent.md" ".claude/agents/$last_agent.md" .claude/settings.json .claude/pstack-models.md .claude/CLAUDE.md .local/share/aidev/licenses/LICENSE-repository; do
+for file in ".claude/agents/$first_agent.md" ".claude/agents/$last_agent.md" .claude/settings.json .claude/pstack-models.md .claude/CLAUDE.md .local/share/aidev/licenses/LICENSE-repository .paseo/config.json; do
 	for kind in plain rich; do
 		interrupted "written ~/$file" "AIDEV_TEST_KILL=written ~/$file" "$kind" reran_as_ours
 	done
@@ -122,6 +128,11 @@ done
 for file in settings.json CLAUDE.md; do
 	interrupted "record ~/.claude/$file" "AIDEV_TEST_KILL=record ~/.claude/$file" rich reran_as_ours
 done
+for kind in plain rich; do
+	interrupted "record ~/.paseo/config.json" "AIDEV_TEST_KILL=record ~/.paseo/config.json" "$kind" reran_as_ours
+done
+# ...and Paseo's config.json, its backup copied but the crew provider not written.
+interrupted "copied ~/.paseo/config.json" "AIDEV_TEST_KILL=copied ~/.paseo/config.json" rich reran_as_ours
 
 # The operator's agent, recorded for a backup not yet copied, or copied and not
 # yet replaced: the re-run replaces it and keeps the backup.

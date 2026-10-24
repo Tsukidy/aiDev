@@ -23,7 +23,9 @@
 //      idempotency; lib/orders.mjs), this checkout's root on the beads
 //      onboarding skip list (lib/onboarding-skip-list.mjs), and the repo's
 //      Paseo plugins, each registered with Paseo from a copy (`paseo plugin
-//      install`, or `reload` to rebuild ours; lib/paseo-plugins.mjs)
+//      install`, or `reload` to rebuild ours; lib/paseo-plugins.mjs), then
+//      the crew provider, one entry in Paseo's config.json, and `paseo
+//      reload` so the daemon loads it (lib/crew-provider.mjs)
 //   9. the install manifest under $XDG_STATE_HOME/aidev, with a backup of
 //      every pre-existing file modified; NOTICE and licenses beside the install
 //
@@ -56,6 +58,7 @@ import {
 	skillDependencies,
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
+import { crewProvider } from './lib/crew-provider.mjs';
 import { dirItem, drop, ensure, items, newManifest } from './lib/manifest.mjs';
 import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { ordersStep } from './lib/orders.mjs';
@@ -68,6 +71,7 @@ const ctx = resolveContext(process.env);
 const orders = ordersStep(ctx);
 const skipList = onboardingSkipList(ctx);
 const plugins = pluginsStep(ctx);
+const crew = crewProvider(ctx);
 
 // --- 1. preconditions -------------------------------------------------------------
 
@@ -92,6 +96,7 @@ try {
 }
 plugins.preconditions(m, report);
 skipList.preconditions(report);
+crew.preconditions(report);
 
 const targets = installTargets(ctx);
 const licenseFiles = readdirSync(SKILLS_SRC)
@@ -106,6 +111,7 @@ const written = [
 	join(ctx.backupsDir, 'x'),
 	...licenseFiles.map((f) => f.dest),
 	skipList.path,
+	crew.path,
 	...plugins.paths(),
 	...targets.flatMap((t) => t.paths()),
 	...orders.paths(),
@@ -144,6 +150,7 @@ const plans = targets.map((t) => {
 });
 const skipPlan = skipList.plan(m);
 const pluginPlans = plugins.plan(m);
+const crewPlan = crew.plan(m);
 
 if (flags['dry-run']) {
 	const plan = [
@@ -152,6 +159,7 @@ if (flags['dry-run']) {
 		...orders.describe(),
 		skipList.describe(skipPlan),
 		...plugins.describe(pluginPlans),
+		crew.describe(crewPlan),
 		`manifest ${ctx.manifestPath}`,
 	];
 	console.log('install --dry-run: nothing written. The plan:');
@@ -198,6 +206,10 @@ if (report.errors.length) finish(1);
 
 // Step 8c: the repo's Paseo plugins.
 plugins.install(m, pluginPlans, report, checkpoint);
+if (report.errors.length) finish(1);
+
+// Step 8d: the crew provider, and the reload that loads it (#40).
+crew.install(m, report, checkpoint);
 if (report.errors.length) finish(1);
 
 finish(0);

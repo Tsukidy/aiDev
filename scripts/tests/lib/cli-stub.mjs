@@ -1,7 +1,8 @@
 // The stub CLIs of the installer tests (lib/install-harness.sh puts a thin
 // wrapper per name on PATH): npx (only `skills@<pin> add|remove`, which copies
 // skill directories and keeps a lock file the way skills@1.7.4 does in copy
-// mode), paseo (a plugin list kept outside the sandbox, in STUB_STATE), bd
+// mode), paseo (a plugin list kept outside the sandbox, in STUB_STATE, and
+// `reload`, which keeps the providers config.json names there), bd
 // (`ready` and `init`) and bun. Every call is logged to STUB_LOG as
 // `<name>|<args>|<cwd>`; STUB_FAIL lists `<name>-<command>` calls to fail,
 // plus paseo-build (every plugin build fails). STUB_INTERRUPT lists
@@ -110,6 +111,17 @@ if (name === 'paseo') {
 	const plugins = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
 	const save = () => writeFileSync(file, JSON.stringify(plugins));
 	const [group, cmd, arg] = args;
+	if (group === 'reload') {
+		// Plays `paseo reload` the way Paseo 0.13 does (daemon-config-store.js
+		// reload): the daemon reads config.json again and applies its
+		// agents.providers live, and fails when the file does not parse. The
+		// providers it then knows are kept in paseo-providers.json.
+		if (fail.includes('paseo-reload')) process.exit(1);
+		const config = join(process.env.PASEO_HOME || join(home, '.paseo'), 'config.json');
+		const providers = existsSync(config) ? (JSON.parse(readFileSync(config, 'utf8')).agents?.providers ?? {}) : {};
+		writeFileSync(join(state, 'paseo-providers.json'), JSON.stringify(providers));
+		exit('paseo-reload', 0);
+	}
 	if (group !== 'plugin') process.exit(64);
 	if (fail.includes(`paseo-${cmd}`)) process.exit(1);
 	const id = cmd === 'install' ? JSON.parse(readFileSync(join(arg, 'paseo-plugin.json'), 'utf8')).id : arg;
