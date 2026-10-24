@@ -682,6 +682,7 @@ run_harness test-install.sh "the installer and uninstaller tests pass (ticket #2
 check "the install manifest's changes hold (#37)" node --test "$here/manifest.test.mjs"
 check "a marked block's leading text (#35) and an owned file's last write (#50) are read from their records" node --test "$here/aidev-install.test.mjs"
 check "the saved-manifest guard refuses a write or call the saved manifest does not cover (#35, #50)" node --test "$here/install-guard.test.mjs"
+check "no installer module but lib/aidev-install.mjs writes files or runs commands itself" node --test "$here/installer-writes.test.mjs"
 check "the Paseo plugins step's decision table holds (#33)" node --test "$here/paseo-plugins.test.mjs"
 run_harness test-install-plugin.sh "the installer's Paseo plugins step tests pass (#33, #39)"
 run_harness test-install-skip-list.sh "the installer's onboarding skip-list tests pass (#34)"

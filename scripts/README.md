@@ -7,7 +7,7 @@ they call, and the offline tests for all of it.
 | File | Role |
 | --- | --- |
 | `verify-curation.mjs` | The curation gate (ticket #12): checks that `skills/` is a coherent, installable, correctly attributed skill set, including the pstack provenance manifest `skills/pstack-provenance.json` (#24) and `skills/NOTICE.md` (#26). The numbered rule list in the file's header comment is the one full description. Run against `skills/` (no args) or any fixture tree. Never walks or checks files inside `node_modules` (e.g. from a local `bun install`). |
-| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the Paseo plugins step's decision table (`tests/paseo-plugins.test.mjs`), the manifest's changes (`tests/manifest.test.mjs`), the text in front of a marked block and an owned file's last write, read from their records (`tests/aidev-install.test.mjs`), and the saved-manifest guard (`tests/install-guard.test.mjs`). |
+| `tests/run.sh` | The whole offline suite: curation-gate fixtures plus the real tree, then the installer tests below and the onboarding plugin's own tests (`personal-extensions/paseo-firstmate-beads-onboarding/tests/run.sh`, whose build check compiles the plugin with the installed Paseo's compiler, and is skipped where `paseo` is not on PATH), the Paseo plugins step's decision table (`tests/paseo-plugins.test.mjs`), the manifest's changes (`tests/manifest.test.mjs`), the text in front of a marked block and an owned file's last write, read from their records (`tests/aidev-install.test.mjs`), the saved-manifest guard (`tests/install-guard.test.mjs`), and the rule that only the core writes or runs commands (`tests/installer-writes.test.mjs`). |
 | `install.mjs`, `uninstall.mjs` | The one-command operator setup and its manifest-driven reversal (ticket #21, spec #11 D5–D9). See below. |
 | `lib/aidev-install.mjs`, `lib/manifest.mjs` | Their shared core, and the install manifest (item kinds, shapes, queries). |
 | `lib/orders.mjs` | The orders step (#35): the two orders installers, each block recorded as an intent before its script runs and settled after, with a subset of the plugins step's contract. |
@@ -178,7 +178,10 @@ a recorded item is unsaved, stop the install with an error that names the
 path or the item. A step records its item, then writes through
 `placeOwnedFile`, `placeSharedFile` or `checkpointedWrite`, and calls
 `checkpoint()` before a command; a command that changes nothing passes
-`readOnly`. `tests/install-guard.test.mjs` holds the guard's cases.
+`readOnly`. `tests/install-guard.test.mjs` holds the guard's cases, and
+`tests/installer-writes.test.mjs` fails when an installer module other than
+`lib/aidev-install.mjs` imports a `node:fs` call that writes, or
+`node:child_process`, since either would get round the guard.
 
 What the install finds already there is not adopted: an orders block in
 `captain.md`, an `aidev-pstack-sheet` block in `CLAUDE.md`, or our hook
@@ -378,4 +381,5 @@ node --test scripts/tests/paseo-plugins.test.mjs       # the plugins step's deci
 node --test scripts/tests/manifest.test.mjs            # the manifest's changes
 node --test scripts/tests/aidev-install.test.mjs       # a marked block's leading text and an owned file's write, from their records
 node --test scripts/tests/install-guard.test.mjs       # the saved-manifest guard
+node --test scripts/tests/installer-writes.test.mjs    # only the core writes or runs commands
 ```
