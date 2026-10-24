@@ -1,25 +1,10 @@
 #!/usr/bin/env bash
 #
-# The suite for spec #11's repo-owned seams: verify-curation.mjs (the
-# curation gate from ticket #12 — driven against synthetic fixture trees built
-# in a temporary directory, one per rule: duplicates, each unresolvable
-# reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
-# control showing a carried agent definition satisfies the agent-reference
-# rule, plugin-rooted paths and namespaced skill references (#26), the pstack
-# provenance manifest from #24 (with #26's copy identity and link pinning),
-# NOTICE.md attribution (#26), a node_modules dependency
-# tree that must be skipped, and finally against the repo's real skills/
-# tree), the .gitignore rules that keep node_modules out of git and admit
-# the root LICENSE (in a throwaway repository), the root LICENSE matching
-# skills/LICENSE-aidev (#29), and the
-# standing-orders installer from ticket #08 (its own harness in
-# test-standing-orders.sh), and the one-command installer and uninstaller
-# from ticket #21 (test-install.sh, with its Paseo plugins step in
-# test-install-plugin.sh, #33, and its onboarding skip list in
-# test-install-skip-list.sh, #34, and installs interrupted at an external call
-# in test-install-interrupt.sh, #35, on the shared lib/install-harness.sh), and the
-# onboarding plugin's own tests, its build from a bare copy with Paseo's
-# compiler included (#33), invoked at the end.
+# The whole offline suite (spec #11): the curation gate, verify-curation.mjs,
+# against one synthetic fixture tree per rule and then the real skills/ tree;
+# the .gitignore and license checks; then every installer harness and unit
+# test, and the onboarding plugin's own tests. The check and run_harness lines
+# below are the list; nothing else keeps one.
 #
 # Usage: tests/run.sh
 
