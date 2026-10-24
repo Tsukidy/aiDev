@@ -41,6 +41,7 @@ import {
 	SKILLS_SRC,
 	findOnPath,
 	insideHome,
+	installCheckpoint,
 	isDir,
 	loadManifest,
 	makeReport,
@@ -56,7 +57,7 @@ import {
 	skillDependencies,
 	worktreeCommonDir,
 } from './lib/aidev-install.mjs';
-import { dirItem, drop, ensure, items, newManifest } from './lib/manifest.mjs';
+import { drop, items, newManifest } from './lib/manifest.mjs';
 import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { ordersStep } from './lib/orders.mjs';
 import { pluginsStep } from './lib/paseo-plugins.mjs';
@@ -162,14 +163,11 @@ if (flags['dry-run']) {
 // --- execute ------------------------------------------------------------------------
 
 const watched = missingDirs(ctx, [...written, ...targets.map((t) => join(t.paths()[0], 'x'))]);
-// Save the manifest, naming every directory the install may create, before
-// each external call and each of the installer's own writes, so an
-// interrupted run leaves nothing uninstall cannot find. finish() drops the
-// directories that were never created.
-const checkpoint = () => {
-	for (const d of watched) ensure(m, dirItem(d), (i) => i.path === d);
-	saveManifest(ctx, m);
-};
+// Saved before each external call and each of the installer's own writes,
+// naming every directory the install may create, so an interrupted run
+// leaves nothing uninstall cannot find; the saved-manifest guard refuses a
+// write or call that comes first.
+const checkpoint = installCheckpoint(ctx, m, watched);
 const finish = (code) => {
 	for (const i of items(m, 'dir', (i) => !isDir(i.path))) drop(m, i);
 	saveManifest(ctx, m);

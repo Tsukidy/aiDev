@@ -32,9 +32,9 @@
 //                          the list we created, once it holds only what we
 //                          wrote), then the record
 
-import { mkdirSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
-import { REPO, lexists, readText, realResolve, writeShared } from './aidev-install.mjs';
+import { REPO, lexists, makeDir, readText, realResolve, writeShared } from './aidev-install.mjs';
 import { add, drop, first, items, replace, skipEntryItem } from './manifest.mjs';
 
 // What a skip list the install creates starts with.
@@ -130,7 +130,7 @@ export function onboardingSkipList(ctx) {
 			const item = skipEntryItem(path, root, text !== null && (record?.existedBefore ?? true), next.before);
 			if (record) replace(m, record, item);
 			else add(m, item);
-			mkdirSync(dirname(path), { recursive: true });
+			makeDir(dirname(path));
 			checkpoint();
 			writeShared(path, next.text);
 		},

@@ -32,7 +32,9 @@ import {
 	backupItem,
 	backupOf,
 	backupPending,
+	dirItem,
 	drop,
+	ensure,
 	items,
 	ownedFile,
 	ownedFileItem,
@@ -102,6 +104,66 @@ function testKillPoint(ctx, point) {
 
 // A path under HOME as ~/…, as a kill point names it.
 const tilde = (ctx, p) => `~/${relative(ctx.home, p)}`;
+
+// --- the saved-manifest guard (#35, #50) ------------------------------------------------
+
+// While an install runs, a file, backup copy or directory may be created or
+// changed only once the manifest saved on disk names its path, and a command
+// may be run only once every item recorded so far is saved, so a run killed
+// there leaves a manifest a re-run and uninstall go by. installCheckpoint
+// turns the guard on; saveManifest keeps it current. A refusal is a bug in
+// the step that wrote: record the item, then write through placeOwnedFile,
+// placeSharedFile or checkpointedWrite, or call checkpoint() before the
+// command.
+let guard = null;
+const itemKey = (i) => JSON.stringify([i.kind, i.path, i.id ?? i.name ?? i.entry ?? i.of ?? null]);
+
+// The install's checkpoint, handed to every step: it saves the manifest,
+// naming every directory in `watched` (finish() drops those never created),
+// and the guard holds from here to the end of the run.
+export function installCheckpoint(ctx, m, watched) {
+	let saved = null;
+	try {
+		saved = JSON.parse(readFileSync(ctx.manifestPath, 'utf8'));
+	} catch {}
+	guard = { ctx, m };
+	noteSaved(saved?.items ?? []);
+	return () => {
+		for (const d of watched) ensure(m, dirItem(d), (i) => i.path === d);
+		saveManifest(ctx, m);
+	};
+}
+
+function noteSaved(saved) {
+	guard.paths = new Set(saved.map((i) => i.path));
+	guard.keys = new Set(saved.map(itemKey));
+}
+
+function refuse(what) {
+	throw new Error(`install ${what} — scripts/lib/aidev-install.mjs, "the saved-manifest guard", says how to record it first`);
+}
+
+function guardPath(p) {
+	if (!guard || p === guard.ctx.manifestPath) return;
+	if (!guard.paths.has(p)) refuse(`would write ${p}, which the saved manifest does not name`);
+	guardDirsOf(p);
+}
+
+function guardDirsOf(p) {
+	for (const d of missingDirs(guard.ctx, [p])) if (!guard.paths.has(d)) refuse(`would create the directory ${d}, which the saved manifest does not name`);
+}
+
+function guardCommand(cmd, args) {
+	if (!guard) return;
+	const unsaved = guard.m.items.find((i) => !guard.keys.has(itemKey(i)));
+	if (unsaved) refuse(`would run ${[cmd, ...args.slice(0, 3)].join(' ')} before the ${unsaved.kind} item for ${unsaved.path} is saved`);
+}
+
+// A directory the install creates, checked by the guard.
+export function makeDir(p) {
+	if (guard) guardDirsOf(join(p, 'x'));
+	mkdirSync(p, { recursive: true });
+}
 
 // --- paths ----------------------------------------------------------------------------
 
@@ -254,6 +316,7 @@ export function readText(p) {
 // that mode is set. With `through`, a symlink is written through, so a
 // dotfiles link stays a link; without it, the path itself is replaced.
 export function writeAtomic(p, content, { mode, through = false } = {}) {
+	guardPath(p);
 	let dest = p;
 	if (through) {
 		try {
@@ -308,6 +371,7 @@ export function loadManifest(ctx) {
 export function saveManifest(ctx, m) {
 	const text = serialize(m);
 	if (readText(ctx.manifestPath) !== text) writeAtomic(ctx.manifestPath, text);
+	if (guard?.m === m) noteSaved(JSON.parse(text).items);
 }
 
 export function repoCommit() {
@@ -337,6 +401,7 @@ export function prepareWrite(ctx, m, checkpoint, path, { backup = false, keepLin
 	checkpoint();
 	testKillPoint(ctx, `record ${tilde(ctx, path)}`);
 	if (!copy) return;
+	guardPath(copy.path);
 	mkdirSync(dirname(copy.path), { recursive: true });
 	copyFileSync(path, `${copy.path}.aidev-tmp`);
 	renameSync(`${copy.path}.aidev-tmp`, copy.path);
@@ -595,7 +660,10 @@ export function jsonLike(v, like) {
 
 // --- external commands ----------------------------------------------------------------------
 
-export function run(ctx, cmd, args, { cwd, capture = false, env = {} } = {}) {
+// `readOnly`: the command changes nothing, so the saved-manifest guard lets it
+// run with records unsaved.
+export function run(ctx, cmd, args, { cwd, capture = false, env = {}, readOnly = false } = {}) {
+	if (!readOnly) guardCommand(cmd, args);
 	const r = spawnSync(cmd, args, {
 		cwd: cwd ?? ctx.home,
 		env: { ...ctx.env, ...env },
