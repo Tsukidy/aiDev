@@ -5,10 +5,10 @@
 //
 //   node scripts/uninstall.mjs [--dry-run] [--purge [--yes]]
 //
-// No manifest → refuses, nothing touched. Otherwise, in order: each Paseo
+// No manifest → refuses, nothing touched. Otherwise, in order: the crew
+// provider in Paseo's config.json, followed by `paseo reload`, then each Paseo
 // plugin's registration from its recorded copy (while the copy still exists),
-// then our entry in the beads onboarding skip list, then the crew provider in
-// Paseo's config.json, followed by `paseo reload`,
+// then our entry in the beads onboarding skip list,
 // the skills (through the skills CLI, per runtime target), every file whose
 // whole content is ours (each only while it still holds what was installed;
 // an edited one, like a tuned model sheet, is kept and reported; a replaced
@@ -36,7 +36,7 @@ import {
 	reverseOwnedFile,
 	reverseSharedFile,
 } from './lib/aidev-install.mjs';
-import { crewProvider } from './lib/crew-provider.mjs';
+import { crewProvider, stripProviderEntry } from './lib/crew-provider.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
 import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { pluginsStep } from './lib/paseo-plugins.mjs';
@@ -57,7 +57,8 @@ if (!m) report.die(`no install manifest at ${ctx.manifestPath} — refusing to g
 const kept = [];
 const keep = (note) => note && kept.push(note);
 const owned = ownedFiles(m);
-const shared = sharedPaths(m);
+const crewPaths = items(m, 'provider-entry').map((i) => i.path);
+const shared = sharedPaths(m).filter((p) => !crewPaths.includes(p));
 const dbs = items(m, 'beads-db');
 const plugins = pluginsStep(ctx);
 const skipList = onboardingSkipList(ctx);
@@ -85,9 +86,9 @@ if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
 if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
+		...crew.reversePlan(m),
 		...plugins.reversePlan(m),
 		...skipList.reversePlan(m),
-		...crew.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
 		...shared.map((p) => `strip our parts from ${p}`),
@@ -104,20 +105,22 @@ const fail = (msg) => {
 	report.die(`${msg}; the manifest keeps what is left — fix and re-run uninstall`);
 };
 
-// --- the Paseo plugins, before their source copies go; then our skip-list entry,
-// and the crew provider, which the daemon reloads without -------------------------
+// One of our parts taken back out of a parsed JSON file, by its kind.
+const stripPart = (v, part) => (part.kind === 'provider-entry' ? stripProviderEntry(v, part) : targetByName(ctx, part.target).stripHookEntry(v, part));
 
+// --- the crew provider, then the Paseo plugins, before their source copies go,
+// then our skip-list entry: the reverse of install's order. Paseo keeps plugin
+// registrations in config.json too, so the crew provider is taken back before
+// `paseo plugin remove` rewrites the file, while it can still match its backup.
+
+try {
+	for (const note of crew.reverse(m, report)) keep(note);
+} catch (e) {
+	fail(`cannot strip the crew provider: ${e.message}`);
+}
+saveManifest(ctx, m);
 plugins.reverse(m, fail);
 skipList.reverse(m);
-{
-	const before = structuredClone(m.items);
-	try {
-		for (const note of crew.reverse(m, report)) keep(note);
-	} catch (e) {
-		m.items = before; // nothing was written; keep its records
-		fail(`cannot strip the crew provider from ${crew.path}: ${e.message}`);
-	}
-}
 saveManifest(ctx, m);
 
 // --- skills, per runtime target ------------------------------------------------------------
@@ -145,11 +148,9 @@ saveManifest(ctx, m);
 // --- files we share: strip our parts; the backup's bytes when that is all it was --------
 
 for (const p of sharedPaths(m)) {
-	const before = structuredClone(m.items);
 	try {
-		keep(reverseSharedFile(m, p, (part) => targetByName(ctx, part.target).stripHookEntry));
+		keep(reverseSharedFile(m, p, stripPart));
 	} catch (e) {
-		m.items = before; // nothing was written for this file; keep its records
 		fail(`cannot strip our parts from ${p}: ${e.message}`);
 	}
 }

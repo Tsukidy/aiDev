@@ -82,7 +82,8 @@ check "a second install leaves config.json byte-identical" test "$(cat "$(config
 check "a second install leaves the manifest byte-identical" test "$(cat "$(manifest_of "$sb")")" = "$manifest"
 check "a second install makes no reload" test "$(reloads "$sb")" -eq 1
 uninstall_in "$sb" --dry-run
-check "the uninstall dry run names the entry and the reload" out_has "$sb" "paseo reload, once the crew provider $crew is stripped"
+check "the uninstall dry run names the entry and the reload" out_has "$sb" "strip the crew provider $crew from $(config_of "$sb"), then paseo reload"
+check "the uninstall dry run names config.json once" test "$(grep -cF "$(config_of "$sb")" "$sb/out.txt")" -eq 1
 uninstall_in "$sb" --purge --yes
 check "uninstall exits 0" test $? -eq 0
 check "uninstall has the daemon reload config.json" test "$(reloads "$sb")" -eq 2
@@ -95,12 +96,11 @@ check "install → uninstall restores the snapshot" test "$(snapshot "$sb/home")
 sb=$(new_sandbox crew-operator rich)
 before=$(snapshot "$sb/home")
 original=$(cat "$(config_of "$sb")")
-others=$(node -e 'const c = require(process.argv[1]); console.log(JSON.stringify({ ...c, agents: { ...c.agents, providers: { ...c.agents.providers } } }))' "$(config_of "$sb")")
 install_in "$sb"
 check "install over the operator's config.json exits 0" test $? -eq 0
 check "install adds the crew provider entry" crew_entry_ok "$sb"
 check "install leaves every other provider and setting as it was" \
-	config_true "$sb" "(() => { const o = $others; const p = { ...c.agents.providers }; delete p['$crew']; return JSON.stringify({ ...c, agents: { ...c.agents, providers: p } }) === JSON.stringify(o); })()"
+	config_true "$sb" "(delete c.agents.providers['$crew'], JSON.stringify(c) === JSON.stringify($original))"
 check "install keeps config.json's mode" test "$(stat -c %a "$(config_of "$sb")")" = 600
 check "install keeps config.json's two-space indent" grep -q '^    "providers": {$' "$(config_of "$sb")"
 uninstall_in "$sb" --purge --yes
@@ -118,6 +118,34 @@ check "uninstall removes our entry" config_true "$sb" "!('$crew' in c.agents.pro
 check "uninstall keeps the operator's change" config_true "$sb" "c.daemon.listen === '127.0.0.1:7777'"
 check "uninstall keeps the operator's providers" config_true "$sb" "c.agents.providers.glm.label === 'GLM Agent'"
 
+# ...and with Paseo keeping plugin registrations in config.json, which
+# `paseo plugin remove` rewrites, as on an operator machine with plugins of
+# its own: uninstall takes the crew provider back first, so the backup's
+# bytes still come back, and no backup is left.
+sb=$(new_sandbox crew-plugins-in-config rich)
+json_edit "$(config_of "$sb")" '(c) => { c.plugins = { theirs: { source: "directory", path: "/opt/theirs", enabled: true } }; }'
+before=$(snapshot "$sb/home")
+original=$(cat "$(config_of "$sb")")
+run_in "$sb" full STUB_PLUGINS_IN_CONFIG=1 -- "$installer"
+check "install with plugins kept in config.json exits 0" test $? -eq 0
+check "the daemon recorded our plugin in config.json" config_true "$sb" "'$plugin_id' in c.plugins"
+run_in "$sb" full STUB_PLUGINS_IN_CONFIG=1 -- "$uninstaller" --purge --yes
+check "uninstall exits 0" test $? -eq 0
+check "uninstall keeps no copy of config.json" not out_has "$sb" "config.json, which changed since install"
+check "uninstall restores config.json byte for byte" test "$(cat "$(config_of "$sb")")" = "$original"
+check "uninstall restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
+# ...and a key the repo does not set, as Paseo's settings write it, is the
+# operator's: a re-run keeps it.
+sb=$(new_sandbox crew-operator-key rich)
+install_in "$sb"
+json_edit "$(config_of "$sb")" "(c) => { c.agents.providers['$crew'].enabled = false; }"
+config=$(cat "$(config_of "$sb")")
+install_in "$sb"
+check "a re-run after the operator disabled the crew provider exits 0" test $? -eq 0
+check "the re-run keeps it disabled, and changes nothing" test "$(cat "$(config_of "$sb")")" = "$config"
+check "the re-run makes no reload" test "$(reloads "$sb")" -eq 1
+
 # --- the operator already has a provider of that id: left alone, not recorded -------------------
 
 sb=$(new_sandbox crew-theirs rich)
@@ -125,7 +153,7 @@ json_edit "$(config_of "$sb")" "(c) => { c.agents.providers['$crew'] = { extends
 original=$(cat "$(config_of "$sb")")
 install_in "$sb"
 check "install with the operator's $crew exits 0" test $? -eq 0
-check "install says the entry is not its own" out_has "$sb" "not added by this install"
+check "install warns that the entry is not its own" out_has "$sb" "warning: $(config_of "$sb") already has a provider $crew, not added by this install"
 check "install leaves the operator's entry and file as they were" test "$(cat "$(config_of "$sb")")" = "$original"
 check "install records no entry" not recorded "$sb"
 check "install makes no reload" test "$(reloads "$sb")" -eq 0

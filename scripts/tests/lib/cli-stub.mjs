@@ -16,6 +16,9 @@
 // `skills add` plays the operator editing the beads onboarding skip list
 // mid-run, after the installer's plan has read it: STUB_SKIP_APPEND appends
 // that line to the list, then STUB_SKIP_MODE chmods it.
+// With STUB_PLUGINS_IN_CONFIG set, `paseo plugin install` and `remove` also
+// rewrite config.json's plugins, as Paseo 0.13 does (plugins/index.js
+// configStore.patch), leaving an empty plugins object behind as it does.
 import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { hostSupplied, imports } from '../../../personal-extensions/paseo-firstmate-beads-onboarding/tests/host-supplied.mjs';
@@ -110,6 +113,14 @@ if (name === 'paseo') {
 	const file = join(state, 'paseo-plugins.json');
 	const plugins = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
 	const save = () => writeFileSync(file, JSON.stringify(plugins));
+	const patchConfigPlugins = (edit) => {
+		if (!process.env.STUB_PLUGINS_IN_CONFIG) return;
+		const config = join(process.env.PASEO_HOME || join(home, '.paseo'), 'config.json');
+		const c = existsSync(config) ? JSON.parse(readFileSync(config, 'utf8')) : {};
+		c.plugins ??= {};
+		edit(c.plugins);
+		writeFileSync(config, JSON.stringify(c, null, 2) + '\n');
+	};
 	const [group, cmd, arg] = args;
 	if (group === 'reload') {
 		// Plays `paseo reload` the way Paseo 0.13 does (daemon-config-store.js
@@ -136,11 +147,17 @@ if (name === 'paseo') {
 	} else if (cmd === 'install') {
 		if (plugins.some((p) => p.id === id)) process.exit(1);
 		plugins.push({ id, path: arg });
+		patchConfigPlugins((p) => {
+			p[id] = { source: 'directory', path: arg, enabled: true };
+		});
 		start(plugins.at(-1));
 	} else if (cmd === 'remove') {
 		const i = plugins.findIndex((p) => p.id === id);
 		if (i < 0) process.exit(1);
 		plugins.splice(i, 1);
+		patchConfigPlugins((p) => {
+			delete p[id];
+		});
 		save();
 	} else if (cmd === 'reload') {
 		const p = plugins.find((x) => x.id === id);

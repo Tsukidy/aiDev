@@ -232,9 +232,9 @@ under its whitelist `.gitignore` is not decided yet):
 
 ### The crew provider
 
-Spec #11 D16: every crewmate runs on a crew provider, which keeps it from
-starting Paseo agents or Workflow runs. The install adds one entry to Paseo's
-`config.json`, under `agents.providers`:
+Spec #11 D16: every crewmate runs on a crew provider, which takes away its
+tools for starting Paseo agents and Workflow runs. The install adds one
+entry to Paseo's `config.json`, under `agents.providers`:
 
 ```json
 "claude-crew": {
@@ -256,6 +256,11 @@ starting Paseo agents or Workflow runs. The install adds one entry to Paseo's
 - `disallowedTools: ["Workflow"]` makes Claude Code refuse its Workflow tool
   to the agent and to its subagents.
 
+The entry removes tools only. A crewmate can still run the `paseo` CLI from
+its shell (`paseo run`, `paseo schedule`), so it is not a sandbox: the
+charter's rule against starting agents, and the crew-limit plugin (#41),
+still count.
+
 Verified against Paseo 0.13.0 (`ProviderOverrideSchema` in
 `@getpaseo/protocol`, the provider registry, and `paseo-tool-policy.js`).
 
@@ -275,14 +280,18 @@ it and never reads or writes firstmate's provider config: providers stay the
 operator's.
 
 **Converging.** An entry with that id that this install did not add is
-the operator's: it is left as is, and nothing is recorded. Our entry, if
-deleted or changed since, is written again as the repo has it, and reloaded.
-Edit it in the repo, not in `config.json`.
+the operator's: it is left as is, with a warning, and nothing is recorded.
+Our entry, if deleted since, is written again and reloaded. The keys the
+repo sets (above) are written again as the repo has them when they differ;
+change them in the repo, not in `config.json`. Any other key of the entry
+is yours and kept: `enabled: false`, set in Paseo's settings, survives a
+re-run.
 
-**Uninstall** takes the entry back out. It also removes `agents.providers`
-and `agents` if that leaves them empty. When the rest of the file is what
-the install found, the backup's exact bytes come back. Then uninstall runs
-`paseo reload`. If that reload fails (the daemon is down), uninstall only
+**Uninstall** takes the entry back out first, before the plugins: Paseo
+keeps plugin registrations in `config.json` too, and `paseo plugin remove`
+rewrites the file. It also removes `agents.providers` and `agents` if that
+leaves them empty. When the rest of the file is what the install found, the
+backup's exact bytes come back. Then uninstall runs `paseo reload`. If that reload fails (the daemon is down), uninstall only
 warns: the file is already put back, and the daemon drops the provider at
 its next reload or restart. An agent still running on the crew provider is
 not stopped. Pick another crew provider in FirstMate settings after
