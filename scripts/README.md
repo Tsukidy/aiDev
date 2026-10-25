@@ -13,9 +13,10 @@ they call, and the offline tests for all of it.
 | `lib/orders.mjs` | The orders step (#35): the two orders installers, each block recorded as an intent before its script runs and settled after, with a subset of the plugins step's contract. |
 | `lib/paseo-plugins.mjs` | The Paseo plugins step (#33, #39): the plugins listed in `PASEO_PLUGIN_DIRS` (`lib/aidev-install.mjs`), and for each its copy, its registration in Paseo, the reload decision and uninstall's removal, with a target-like contract outside the target registry. |
 | `lib/onboarding-skip-list.mjs` | The beads onboarding skip-list step (#34): this checkout's root on that plugin's skip list, added before the plugins are registered, removed after them at uninstall. |
+| `lib/crew-provider.mjs` | The crew provider step (#40, spec #11 D16): one provider entry in Paseo's `config.json` for crewmates, and the `paseo reload` that loads it. |
 | `lib/targets.mjs`, `lib/claude-code-target.mjs` | The runtime-target contract and registry, and the Claude Code target (the only one implemented, D5; a pi or omp target is a sibling module). |
 | `claude-code/session-start.sh` | The SessionStart routing hook the installer places (adapted from pstack-claude's, MIT). |
-| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh`, `tests/test-install-interrupt.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the Paseo plugins step's cases (#33, #39), the third its skip-list cases (#34), the fourth the installs killed at an external call (#35) or between the installer's own writes (#50). Run directly, or via `tests/run.sh`. |
+| `tests/test-install.sh`, `tests/test-install-plugin.sh`, `tests/test-install-skip-list.sh`, `tests/test-install-crew-provider.sh`, `tests/test-install-interrupt.sh` | The installer and uninstaller's stub-driven offline tests, run against sandboxed homes; the second holds the Paseo plugins step's cases (#33, #39), the third its skip-list cases (#34), the fourth its crew provider cases (#40), the fifth the installs killed at an external call (#35) or between the installer's own writes (#50). Run directly, or via `tests/run.sh`. |
 | `tests/lib/install-harness.sh`, `tests/lib/cli-stub.mjs` | Their shared harness (sourced): sandboxes, helpers, and the stub CLIs (`npx`, `paseo`, `bd`, `bun`). |
 | `install-standing-orders.sh` | The behavioral half of the combined fleet workflow (ticket #08): appends the marked standing-orders block to the first mate's `data/captain.md`. `install.mjs` runs it. See below. |
 | `tests/test-standing-orders.sh` | That installer's stub-driven offline harness (run directly, or via `tests/run.sh`). |
@@ -120,7 +121,8 @@ touches nothing.
    uninstall first. Two directories declaring one plugin id are refused too,
    before anything is written. A failed daemon call stops the install before
    the next plugin; a re-run retries it. The dry run prints the daemon call
-   the run will make for each plugin.
+   the run will make for each plugin. Last, **the crew provider**: one
+   entry in Paseo's `config.json`, then `paseo reload` (below).
 9. **The manifest** (below), plus NOTICE, `pstack-provenance.json` and every
    license file of `skills/`, with the repository's own `LICENSE`, under the
    data directory, so attribution travels with the install.
@@ -148,10 +150,12 @@ header goes with the block. A re-run also drops `captain.md`'s record and
 backup, which a killed run leaves, when nothing of ours is in the file and no
 orders script has changed it (the record says so once one has).
 So a re-run knows the skills a killed run copied as ours, and uninstall after
-a kill at any call restores the pre-install state. One case needs the re-run
-first: a kill inside the standing-orders script after it created `captain.md`
-with its header, but before it appended the block. Uninstall straight after
-leaves that header; uninstall after a re-run does not.
+a kill at any call restores the pre-install state. The crew provider's
+`paseo reload` is recorded too, as owed, before it runs (below). One case
+needs the re-run first: a kill inside the standing-orders script after it
+created `captain.md` with its header, but before it appended the block.
+Uninstall straight after leaves that header; uninstall after a re-run does
+not.
 `tests/test-install-interrupt.sh` kills the install at each such call.
 
 An install killed between its own file writes converges the same way (#50).
@@ -226,12 +230,82 @@ under its whitelist `.gitignore` is not decided yet):
   worktree that root is the worktree, not the base, so the install warns,
   and under `--strict` refuses before anything is written.
 
+### The crew provider
+
+Spec #11 D16: every crewmate runs on a crew provider, which takes away its
+tools for starting Paseo agents and Workflow runs. The install adds one
+entry to Paseo's `config.json`, under `agents.providers`:
+
+```json
+"claude-crew": {
+  "extends": "claude",
+  "label": "Claude Code (crew)",
+  "description": "FirstMate crewmates: Claude Code without Paseo tools or Workflow runs (installed by aiDev)",
+  "paseoTools": { "enabled": false },
+  "disallowedTools": ["Workflow"]
+}
+```
+
+- `extends: "claude"` runs Claude Code exactly as Paseo's `claude` provider
+  does, with its models and modes.
+- `paseoTools.enabled: false` makes the daemon give an agent on this provider
+  none of Paseo's tools, so it has no `create_agent`. It also has no
+  schedules or heartbeats, which start agents too. A crewmate needs no Paseo
+  tool: it reports through the status line of its last message. The mate
+  and other agents keep Paseo's tools.
+- `disallowedTools: ["Workflow"]` makes Claude Code refuse its Workflow tool
+  to the agent and to its subagents.
+
+The entry removes tools only. A crewmate can still run the `paseo` CLI from
+its shell (`paseo run`, `paseo schedule`), so it is not a sandbox: the
+charter's rule against starting agents, and the crew-limit plugin (#41),
+still count.
+
+Verified against Paseo 0.13.0 (`ProviderOverrideSchema` in
+`@getpaseo/protocol`, the provider registry, and `paseo-tool-policy.js`).
+
+**How the daemon loads it.** After writing the entry, the install runs
+`paseo reload`, which reloads `config.json` without a restart:
+`agents.providers` is one of the paths the daemon reloads live. A new or
+changed provider gets its own client. No running agent is restarted or
+closed. The reload applies the whole file, so any edit of yours to
+`config.json` that the daemon has not loaded yet is applied with it. Before
+the file is written, the entry is recorded with `pendingReload`, and that
+flag is cleared only after a successful reload. So a failed or interrupted
+reload is retried by the next run.
+
+**What the captain does.** Select the crew provider (`Claude Code (crew)`)
+once as the crew provider in FirstMate settings. The installer never selects
+it and never reads or writes firstmate's provider config: providers stay the
+operator's.
+
+**Converging.** An entry with that id that this install did not add is
+the operator's: it is left as is, with a warning, and nothing is recorded.
+Our entry, if deleted since, is written again and reloaded. The keys the
+repo sets (above) are written again as the repo has them when they differ,
+and a key it no longer sets is removed (the manifest records the keys of
+our last write); change them in the repo, not in `config.json`. Any other
+key of the entry is yours and kept: `enabled: false`, set in Paseo's
+settings, survives a re-run.
+
+**Uninstall** takes the entry back out with our parts of the other shared
+files, first, before any daemon call: Paseo keeps plugin registrations in
+`config.json` too, and `paseo plugin remove` rewrites the file. It also
+removes `agents.providers` and `agents` if that leaves them empty. When the
+rest of the file is what the install found, the backup's exact bytes come
+back. Then uninstall runs `paseo reload`. If that reload fails (the daemon
+is down), uninstall only warns: the file is already put back, and the
+daemon drops the provider at its next reload or restart. An agent still running on the crew provider is
+not stopped. Pick another crew provider in FirstMate settings after
+uninstall.
+
 ### Every path written
 
 `<claude>` is `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `<data>` is
 `${XDG_DATA_HOME:-~/.local/share}/aidev`; `<state>` is
-`${XDG_STATE_HOME:-~/.local/state}/aidev`; `<mate>` is the first mate's home
-(by default `$PASEO_HOME/plugin-data/firstmate/home`).
+`${XDG_STATE_HOME:-~/.local/state}/aidev`; `<paseo>` is `$PASEO_HOME`, else
+`~/.paseo`; `<mate>` is the first mate's home (by default
+`<paseo>/plugin-data/firstmate/home`).
 
 | Path | What | Uninstall |
 | --- | --- | --- |
@@ -245,6 +319,7 @@ under its whitelist `.gitignore` is not decided yet):
 | `<mate>/data/captain.md` | the `aidev-standing-orders` and `paseo-beads-onboarding` blocks (written by the two orders installers) | both blocks and the headings in front of them removed |
 | `<mate>/.beads`, `.beads.gate.lock`, `.git` | the mate's home memory database, when `bd init` created it during install | kept; `--purge` deletes them |
 | `<data>/paseo-plugins/<id>/` | each plugin's source copy (today `firstmate-beads-onboarding`), registered in Paseo by `paseo plugin install` | `paseo plugin remove` (only a registration Paseo lists from this copy; a manifest from before #33 that recorded the copy but no plugin is upgraded to record it), then the copy is deleted |
+| `<paseo>/config.json` | the crew provider entry `agents.providers.claude-crew`, then `paseo reload` (the file is created if absent) | our entry removed, then `paseo reload`; the backup's exact bytes when nothing else changed; the file is deleted if the install created it and nothing else is in it |
 | `${XDG_CONFIG_HOME:-~/.config}/aidev/beads-onboarding-skip` | one line: this checkout's root (the file is created if absent) | our line removed, also when the plugin's registration is not ours; the file is deleted if the install created it and nothing else is in it |
 | `<data>/licenses/` | NOTICE, provenance manifest, licenses | deleted |
 | `<state>/install-manifest.json` | the manifest | deleted last |
@@ -266,11 +341,13 @@ The npx package cache under `~/.npm` is npm's and is left alone.
 
 ### The manifest
 
-JSON at `<state>/install-manifest.json`: `schemaVersion` (5), `installedAt` (the
+JSON at `<state>/install-manifest.json`: `schemaVersion` (6), `installedAt` (the
 first install), `repoCommit` (the latest install), and `items`, each with a
 `kind` and a `path`: `skill`, `agent`, `file` (with `sha256` at install time,
 and `next` while a write is recorded but not settled;
-`shared: true` for settings.json, CLAUDE.md and captain.md), `hook-entry`,
+`shared: true` for settings.json, CLAUDE.md, captain.md and Paseo's
+config.json), `hook-entry`, `provider-entry` (with `id`, and `pendingReload`
+from before our write of it until the daemon reloads it),
 `marked-block` (with `before`, the text the install put in front of the
 block, or, until the orders script that appends it has run, `at`, the length
 and sha256 of the text the file held before it),
@@ -291,7 +368,9 @@ older checkout's uninstall would strip such a block without the text it was
 appended after, so it refuses a 4. Version 5 (#50) only adds `next` on `agent`
 and `file`, and `pending` on `backup`, so a version 4 is read as is; an older
 checkout's uninstall would misread a record that has not settled, so it
-refuses a 5.
+refuses a 5. Version 6 (#40) only adds `provider-entry`, so a version 5 is
+read as is; an older checkout's uninstall would leave our provider in
+Paseo's config, so it refuses a 6.
 
 ### The orders block upgrade story
 
@@ -364,6 +443,7 @@ bash scripts/tests/test-standing-orders.sh   # the orders installer alone
 bash scripts/tests/test-install.sh           # install.mjs and uninstall.mjs alone
 bash scripts/tests/test-install-plugin.sh    # their Paseo plugins step alone
 bash scripts/tests/test-install-skip-list.sh # its skip-list entry alone
+bash scripts/tests/test-install-crew-provider.sh # its crew provider alone
 bash scripts/tests/test-install-interrupt.sh # installs killed at an external call or between writes
 node --test scripts/tests/paseo-plugins.test.mjs       # the plugins step's decision table
 node --test scripts/tests/manifest.test.mjs            # the manifest's changes

@@ -22,6 +22,10 @@
 //   skip-entry    our line (entry) in the operator's beads onboarding skip
 //                 list (path), written after it is recorded; before: what
 //                 the install put in front of it (#34)
+//   provider-entry  our provider (id) in Paseo's config.json (path), a part
+//                 of that shared file (#40); keys: the entry's keys we set at
+//                 our last write; pendingReload: written, or about to be, and
+//                 the daemon not yet reloaded since
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created
@@ -51,8 +55,11 @@ import { basename, dirname } from 'node:path';
 // pending on a backup): a version 4 needs no upgrade, and an older
 // checkout's uninstall would misread a record that has not settled, so it
 // refuses a 5.
-export const SCHEMA_VERSION = 5;
-export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'plugin', 'skip-entry', 'backup', 'dir', 'beads-db', 'skills-lock'];
+// 6 since #40, which adds provider-entry: a version 5 needs no upgrade, and an
+// older checkout's uninstall would leave our provider in Paseo's config, so
+// it refuses a 6.
+export const SCHEMA_VERSION = 6;
+export const KINDS = ['skill', 'agent', 'file', 'hook-entry', 'marked-block', 'provider-entry', 'plugin', 'skip-entry', 'backup', 'dir', 'beads-db', 'skills-lock'];
 
 export function newManifest(repoCommit) {
 	return { schemaVersion: SCHEMA_VERSION, installedAt: new Date().toISOString(), repoCommit, items: [] };
@@ -93,8 +100,8 @@ export const first = (m, kind, pred) => items(m, kind, pred)[0];
 export const ownedFile = (m, path) => m.items.find((i) => (i.kind === 'agent' || (i.kind === 'file' && !i.shared)) && i.path === path);
 export const sharedFile = (m, path) => first(m, 'file', (i) => i.shared && i.path === path);
 export const backupOf = (m, path) => first(m, 'backup', (i) => i.of === path);
-// Our parts (hook entries, marked blocks) in one shared file.
-const isPart = (i) => i.kind === 'hook-entry' || i.kind === 'marked-block';
+// Our parts (hook entries, marked blocks, provider entries) in one shared file.
+const isPart = (i) => i.kind === 'hook-entry' || i.kind === 'marked-block' || i.kind === 'provider-entry';
 export const partsIn = (m, path) => m.items.filter((i) => isPart(i) && i.path === path);
 // Every file whose whole content is ours, and every file we only add parts to.
 export const ownedFiles = (m) => m.items.filter((i) => i.kind === 'agent' || (i.kind === 'file' && !i.shared));
@@ -141,6 +148,7 @@ export const ownedFileItem = ({ kind = 'file', name, path, sha256, existedBefore
 });
 export const sharedFileItem = (path, existedBefore, format = 'text') => ({ kind: 'file', path, shared: true, format, existedBefore });
 export const hookEntryItem = (target, path, event, marker) => ({ kind: 'hook-entry', target, path, event, marker });
+export const providerEntryItem = (path, id) => ({ kind: 'provider-entry', path, id });
 export const markedBlockItem = (path, id, before) => ({ kind: 'marked-block', path, id, before });
 // The intent to append a block to a file holding `text` (#35).
 export const markedBlockIntent = (path, id, text) => ({

@@ -71,7 +71,8 @@ make_stub_dir "$tmp/stubs/nopaseo" npx bd bun
 # at firstmate's default location). `rich` sandboxes also carry what an
 # operator machine already has: settings.json with other hooks and keys, a
 # global CLAUDE.md, captain orders, an unrelated skill and agent, a skills-CLI
-# lock with someone else's entry, and an existing home memory database.
+# lock with someone else's entry, an existing home memory database, and
+# Paseo's config.json with providers and settings of its own.
 
 mate_rel=.paseo/plugin-data/firstmate/home
 
@@ -120,6 +121,38 @@ JSON
 		printf '{\n  "version": 3,\n  "skills": {\n    "someone-else": {\n      "source": "x/y",\n      "sourceType": "github"\n    }\n  }\n}' >"$h/.local/state/skills/.skill-lock.json"
 		printf '# Standing orders\n\nNever push to main.\n' >"$h/$mate_rel/data/captain.md"
 		printf 'existing\n' >"$h/$mate_rel/.beads/config.yaml"
+		cat >"$h/.paseo/config.json" <<'JSON'
+{
+  "version": 1,
+  "daemon": {
+    "listen": "127.0.0.1:6767",
+    "mcp": {
+      "injectIntoAgents": true
+    }
+  },
+  "agents": {
+    "providers": {
+      "claude": {
+        "enabled": true
+      },
+      "glm": {
+        "extends": "acp",
+        "label": "GLM Agent",
+        "command": [
+          "npx",
+          "-y",
+          "glm-acp-agent@1.14.0"
+        ],
+        "enabled": false
+      }
+    },
+    "metadataGeneration": {
+      "providers": []
+    }
+  }
+}
+JSON
+		chmod 600 "$h/.paseo/config.json" # Paseo writes it private
 	fi
 	printf '%s\n' "$sb"
 }

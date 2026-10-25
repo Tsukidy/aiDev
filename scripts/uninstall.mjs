@@ -5,16 +5,18 @@
 //
 //   node scripts/uninstall.mjs [--dry-run] [--purge [--yes]]
 //
-// No manifest → refuses, nothing touched. Otherwise, in order: each Paseo
-// plugin's registration from its recorded copy (while the copy still exists),
-// then our entry in the beads onboarding skip list,
-// the skills (through the skills CLI, per runtime target), every file whose
-// whole content is ours (each only while it still holds what was installed;
-// an edited one, like a tuned model sheet, is kept and reported; a replaced
-// operator file comes back), our parts of shared files (the hook entry in
-// settings.json, the marked blocks in CLAUDE.md and captain.md; when the
-// result equals the pre-install backup, the backup's exact bytes come back),
-// and the directories the install created, if empty. Beads databases the
+// No manifest → refuses, nothing touched. Otherwise, in order: our parts of
+// shared files (the hook entry in settings.json, the marked blocks in
+// CLAUDE.md and captain.md, the crew provider in Paseo's config.json; when
+// the result equals the pre-install backup, the backup's exact bytes come
+// back), before any daemon call rewrites one; `paseo reload` when the crew
+// provider was among them; each Paseo plugin's registration from its
+// recorded copy (while the copy still exists); our entry in the beads
+// onboarding skip list; the skills (through the skills CLI, per runtime
+// target); every file whose whole content is ours (each only while it still
+// holds what was installed; an edited one, like a tuned model sheet, is kept
+// and reported; a replaced operator file comes back); and the directories the
+// install created, if empty. Beads databases the
 // setup created are kept unless --purge, which asks on a terminal (or takes
 // --yes) before anything is touched.
 
@@ -35,6 +37,7 @@ import {
 	reverseOwnedFile,
 	reverseSharedFile,
 } from './lib/aidev-install.mjs';
+import { crewProvider, stripProviderEntry } from './lib/crew-provider.mjs';
 import { backupOf, drop, items, ownedFiles, sharedPaths } from './lib/manifest.mjs';
 import { onboardingSkipList } from './lib/onboarding-skip-list.mjs';
 import { pluginsStep } from './lib/paseo-plugins.mjs';
@@ -59,6 +62,7 @@ const shared = sharedPaths(m);
 const dbs = items(m, 'beads-db');
 const plugins = pluginsStep(ctx);
 const skipList = onboardingSkipList(ctx);
+const crew = crewProvider(ctx);
 
 // --- preconditions ---------------------------------------------------------------
 
@@ -82,11 +86,12 @@ if (flags.purge && dbs.length && !flags.yes && !flags['dry-run']) {
 if (flags['dry-run']) {
 	const skillsByAgent = Map.groupBy(items(m, 'skill'), (s) => s.agent);
 	const plan = [
+		...shared.map((p) => `strip our parts from ${p}`),
+		...crew.reversePlan(m),
 		...plugins.reversePlan(m),
 		...skipList.reversePlan(m),
 		...[...skillsByAgent].map(([agent, s]) => `skills remove (${SKILLS_CLI}, ${agent}, user level): ${s.map((x) => x.name).join(' ')}`),
 		...owned.map((f) => `remove ${f.path} if unchanged since install${backupOf(m, f.path) ? ", then restore the operator's original" : ''}`),
-		...shared.map((p) => `strip our parts from ${p}`),
 		...dbs.map((d) => (flags.purge ? `purge ${d.path}` : `keep ${d.path} (beads database; --purge removes it)`)),
 		`remove ${ctx.manifestPath} and the directories the install created, if empty`,
 	];
@@ -95,10 +100,33 @@ if (flags['dry-run']) {
 	process.exit(0);
 }
 
+// The kept notes go out first: their records are gone from the manifest, so
+// a re-run would not name them.
 const fail = (msg) => {
+	for (const k of kept) report.say(`kept ${k}`);
 	saveManifest(ctx, m);
 	report.die(`${msg}; the manifest keeps what is left — fix and re-run uninstall`);
 };
+
+// One of our parts taken back out of a parsed JSON file, by its kind.
+const stripPart = (v, part) => (part.kind === 'provider-entry' ? stripProviderEntry(v, part) : targetByName(ctx, part.target).stripHookEntry(v, part));
+
+// --- files we share: strip our parts; the backup's bytes when that is all it was.
+// First, before any daemon call: Paseo keeps plugin registrations in
+// config.json too, and `paseo plugin remove` rewrites it, after which it could
+// no longer match its backup. Then the daemon reloads without our provider.
+
+const crewRecorded = crew.recorded(m);
+for (const p of shared) {
+	try {
+		keep(reverseSharedFile(m, p, stripPart));
+	} catch (e) {
+		if (crewRecorded && !crew.recorded(m)) crew.reload(report);
+		fail(`cannot strip our parts from ${p}: ${e.message}`);
+	}
+}
+if (crewRecorded) crew.reload(report);
+saveManifest(ctx, m);
 
 // --- the Paseo plugins, before their source copies go; then our skip-list entry ------
 
@@ -126,19 +154,6 @@ saveManifest(ctx, m);
 // --- files whose whole content is ours -------------------------------------------------
 
 for (const f of owned) keep(reverseOwnedFile(m, f));
-saveManifest(ctx, m);
-
-// --- files we share: strip our parts; the backup's bytes when that is all it was --------
-
-for (const p of shared) {
-	const before = structuredClone(m.items);
-	try {
-		keep(reverseSharedFile(m, p, (part) => targetByName(ctx, part.target).stripHookEntry));
-	} catch (e) {
-		m.items = before; // nothing was written for this file; keep its records
-		fail(`cannot strip our parts from ${p}: ${e.message}`);
-	}
-}
 saveManifest(ctx, m);
 
 // --- beads databases ----------------------------------------------------------------------

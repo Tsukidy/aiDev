@@ -127,7 +127,7 @@ export function claudeCodeTarget(ctx) {
 	// The same reversal uninstall uses: settings.json holds only our hook entry.
 	function removeHook(m, report) {
 		if (partsIn(m, settings).length) {
-			const kept = reverseSharedFile(m, settings, () => stripHookEntry);
+			const kept = reverseSharedFile(m, settings, stripHookEntry);
 			if (kept) report.say(`kept ${kept}`);
 		}
 		for (const f of hookFiles) {
