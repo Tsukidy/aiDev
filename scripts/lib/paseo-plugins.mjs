@@ -39,7 +39,7 @@ import { add, drop, first, items, pluginItem, replace } from './manifest.mjs';
 // the plugin, or all plugins, are switched off, and Paseo then refuses to
 // reload it; failed means its build or start failed, and it stays registered.
 function daemonPlugins(ctx) {
-	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true });
+	const r = run(ctx, 'paseo', ['plugin', 'ls', '--json'], { capture: true, readOnly: true });
 	if (r.status !== 0) return null;
 	try {
 		const list = JSON.parse(r.stdout);

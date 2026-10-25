@@ -1,25 +1,10 @@
 #!/usr/bin/env bash
 #
-# The suite for spec #11's repo-owned seams: verify-curation.mjs (the
-# curation gate from ticket #12 — driven against synthetic fixture trees built
-# in a temporary directory, one per rule: duplicates, each unresolvable
-# reference syntax, unparseable frontmatter, the pstack: ban, plus a positive
-# control showing a carried agent definition satisfies the agent-reference
-# rule, plugin-rooted paths and namespaced skill references (#26), the pstack
-# provenance manifest from #24 (with #26's copy identity and link pinning),
-# NOTICE.md attribution (#26), a node_modules dependency
-# tree that must be skipped, and finally against the repo's real skills/
-# tree), the .gitignore rules that keep node_modules out of git and admit
-# the root LICENSE (in a throwaway repository), the root LICENSE matching
-# skills/LICENSE-aidev (#29), and the
-# standing-orders installer from ticket #08 (its own harness in
-# test-standing-orders.sh), and the one-command installer and uninstaller
-# from ticket #21 (test-install.sh, with its Paseo plugins step in
-# test-install-plugin.sh, #33, and its onboarding skip list in
-# test-install-skip-list.sh, #34, and installs interrupted at an external call
-# in test-install-interrupt.sh, #35, on the shared lib/install-harness.sh), and the
-# onboarding plugin's own tests, its build from a bare copy with Paseo's
-# compiler included (#33), invoked at the end.
+# The whole offline suite (spec #11): the curation gate, verify-curation.mjs,
+# against one synthetic fixture tree per rule and then the real skills/ tree;
+# the .gitignore and license checks; then every installer harness and unit
+# test, and the onboarding plugin's own tests. The check and run_harness lines
+# below are the list; nothing else keeps one.
 #
 # Usage: tests/run.sh
 
@@ -681,6 +666,8 @@ run_harness test-standing-orders.sh "the standing-orders installer tests pass (t
 run_harness test-install.sh "the installer and uninstaller tests pass (ticket #21)"
 check "the install manifest's changes hold (#37)" node --test "$here/manifest.test.mjs"
 check "a marked block's leading text (#35) and an owned file's last write (#50) are read from their records" node --test "$here/aidev-install.test.mjs"
+check "the saved-manifest guard refuses a write or call the saved manifest does not cover (#35, #50)" node --test "$here/install-guard.test.mjs"
+check "no installer module but lib/aidev-install.mjs writes files or runs commands itself" node --test "$here/installer-writes.test.mjs"
 check "the Paseo plugins step's decision table holds (#33)" node --test "$here/paseo-plugins.test.mjs"
 run_harness test-install-plugin.sh "the installer's Paseo plugins step tests pass (#33, #39)"
 run_harness test-install-skip-list.sh "the installer's onboarding skip-list tests pass (#34)"
