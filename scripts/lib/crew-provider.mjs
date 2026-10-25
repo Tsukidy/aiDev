@@ -3,28 +3,28 @@
 // which every crewmate runs on once the captain selects it as the crew
 // provider in FirstMate settings. The installer never selects it: providers
 // are the operator's, and so is any key of the entry the repo does not set.
-// On it the daemon gives an agent none of Paseo's tools,
-// so a crewmate has no create_agent (nor a schedule, which starts agents
-// too), and Claude Code refuses its Workflow tool. Shaped like the skip-list
-// step (onboarding-skip-list.mjs): runtime-neutral, outside the target
-// registry, one path:
+// On it the daemon gives an agent none of Paseo's tools, so a crewmate has no
+// create_agent (nor a schedule, which starts agents too), and Claude Code
+// refuses its Workflow tool. Shaped like the skip-list step
+// (onboarding-skip-list.mjs): runtime-neutral, outside the target registry,
+// one path:
 //
 //   preconditions(report)  install's read-only check: config.json, if there
-//                          is one, is a JSON object, and so are its agents
-//                          and agents.providers
+//                          is one, is a JSON object, and so are its agents,
+//                          agents.providers and our entry
 //   path                   the one path it writes
-//   plan(m)                → { action, pendingReload, ... } (action: see providerAction)
+//   plan(m)                → { action, pendingReload } (action: see providerAction)
 //   describe(plan)         its line, printed by --dry-run
 //   install(m, report, checkpoint)  read the file afresh; when the entry is
 //                          absent or not the repo's: record it as a part of
-//                          the shared file, with pendingReload, and write it;
-//                          then, while the record says pendingReload, reload
-//   reversePlan(m)         uninstall's --dry-run lines
-//   reverse(m, report)     for each recorded entry, strip it (the backup's
-//                          bytes come back when nothing else changed), then
-//                          reload; a failed reload only warns. Uninstall runs
-//                          it before the plugins step's, whose `paseo plugin
-//                          remove` rewrites config.json
+//                          the shared file, with pendingReload and the keys
+//                          the repo sets, and write it; then, while the record
+//                          says pendingReload, reload
+//   recorded(m)            whether the manifest records our entry
+//   reversePlan(m)         uninstall's --dry-run line
+//   reload(report)         uninstall's reload, once it has stripped the entry
+//                          (stripProviderEntry, through its shared-file pass);
+//                          a failed reload only warns
 //
 // The daemon picks the entry up with `paseo reload` (Paseo 0.13,
 // daemon-config-store.js: agents.providers is reloadable). A new or changed
@@ -34,7 +34,7 @@
 
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { jsonLike, placeSharedFile, readJsonObject, readText, reverseSharedFile, run } from './aidev-install.mjs';
+import { jsonLike, placeSharedFile, readText, run } from './aidev-install.mjs';
 import { add, first, items, providerEntryItem } from './manifest.mjs';
 
 export const CREW_PROVIDER_ID = 'claude-crew';
@@ -45,20 +45,24 @@ export const CREW_PROVIDER = {
 	paseoTools: { enabled: false },
 	disallowedTools: ['Workflow'],
 };
+const REPO_KEYS = Object.keys(CREW_PROVIDER);
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // What config.json needs for the crew provider. Only the keys the repo sets
-// are ours to keep as the repo has them; any other key of the entry (say
-// `enabled`, which Paseo's settings toggle) is the operator's.
+// are ours; any other key of the entry (say `enabled`, which Paseo's settings
+// toggle) is the operator's. `keys` are the keys we set at our last write.
 //   add       absent: add ours
-//   update    ours, but a key the repo sets differs (a repo update, or an edit): the repo's again
-//   current   ours, with every key the repo sets as the repo has it
+//   update    ours, but a key the repo sets differs (a repo update, or an
+//             edit), or a key we set the repo no longer does: the repo's again
+//   current   ours, with every key as the repo has it
 //   operator  present, and not added by this install: left alone
-export function providerAction({ current, recorded }) {
+export function providerAction({ current, recorded, keys = [] }) {
 	if (current === undefined) return 'add';
 	if (!recorded) return 'operator';
-	return Object.entries(CREW_PROVIDER).every(([k, v]) => isDeepStrictEqual(current[k], v)) ? 'current' : 'update';
+	const same = REPO_KEYS.every((k) => isDeepStrictEqual(current[k], CREW_PROVIDER[k]));
+	const stale = keys.some((k) => !REPO_KEYS.includes(k) && k in current);
+	return same && !stale ? 'current' : 'update';
 }
 
 // A parsed config.json without our provider; then without providers and
@@ -72,18 +76,22 @@ export function stripProviderEntry(config, { id }) {
 	return config;
 }
 
-// config.json parsed, { config }, or why the step cannot add to it, { error }.
-function parse(path) {
+// config.json's text parsed, { config }, or why the step cannot add to it,
+// { error }. No file is an empty config.
+function parse(path, text) {
 	let config;
 	try {
-		config = readJsonObject(path);
+		config = text === null ? {} : JSON.parse(text);
 	} catch (e) {
-		return { error: `${path} does not parse as a JSON object (${e.message}) — fix it and re-run` };
+		return { error: `${path} does not parse (${e.message}) — fix it and re-run` };
 	}
-	for (const [key, v] of [
-		['agents', config.agents],
-		['agents.providers', config.agents?.providers],
-	]) {
+	const paths = [
+		['the file', config],
+		['agents', config?.agents],
+		['agents.providers', config?.agents?.providers],
+		[`agents.providers.${CREW_PROVIDER_ID}`, config?.agents?.providers?.[CREW_PROVIDER_ID]],
+	];
+	for (const [key, v] of paths) {
 		if (v !== undefined && !isObject(v)) return { error: `${path}: ${key} is not a JSON object — fix it and re-run` };
 	}
 	return { config };
@@ -94,11 +102,12 @@ export function crewProvider(ctx) {
 	const ours = (m) => first(m, 'provider-entry', (i) => i.path === path && i.id === CREW_PROVIDER_ID);
 	const read = (m) => {
 		const text = readText(path);
-		const { config, error } = parse(path);
+		const { config, error } = parse(path, text);
 		if (error) return { error };
 		const record = ours(m);
 		const current = config.agents?.providers?.[CREW_PROVIDER_ID];
-		return { text, config, record, current, action: providerAction({ current, recorded: Boolean(record) }), pendingReload: Boolean(record?.pendingReload) };
+		const action = providerAction({ current, recorded: Boolean(record), keys: record?.keys });
+		return { text, config, record, current, action, pendingReload: Boolean(record?.pendingReload) };
 	};
 	const describe = ({ action, pendingReload }) => {
 		const id = CREW_PROVIDER_ID;
@@ -107,17 +116,19 @@ export function crewProvider(ctx) {
 		if (action === 'current') return `the crew provider ${id} is in ${path} already${pendingReload ? ', then paseo reload (an earlier run did not)' : ''}`;
 		return `${path} already has a provider ${id}, not added by this install — left as is, so crewmates selecting it may not get the crew limits`;
 	};
-	const reload = () => run(ctx, 'paseo', ['reload']);
 
 	return {
 		path,
 
 		preconditions(report) {
-			const { error } = parse(path);
+			const { error } = parse(path, readText(path));
 			if (error) report.error(error);
 		},
 
-		plan: (m) => read(m),
+		plan(m) {
+			const { action, pendingReload } = read(m);
+			return { action, pendingReload };
+		},
 
 		describe,
 
@@ -130,30 +141,29 @@ export function crewProvider(ctx) {
 			report.say(describe({ action, pendingReload }));
 			let item = record;
 			if (action !== 'current') {
+				const kept = { ...current };
+				for (const k of record?.keys ?? []) delete kept[k];
 				config.agents ??= {};
 				config.agents.providers ??= {};
-				config.agents.providers[CREW_PROVIDER_ID] = { ...current, ...structuredClone(CREW_PROVIDER) };
+				config.agents.providers[CREW_PROVIDER_ID] = { ...kept, ...structuredClone(CREW_PROVIDER) };
 				item ??= add(m, providerEntryItem(path, CREW_PROVIDER_ID));
+				item.keys = REPO_KEYS;
 				item.pendingReload = true;
 				placeSharedFile(ctx, m, checkpoint, path, jsonLike(config, text), 'json');
 			}
 			if (!item.pendingReload) return;
-			const r = reload();
+			const r = run(ctx, 'paseo', ['reload']);
 			if (r.status !== 0) return report.error(`paseo reload failed (exit ${r.status}) — the crew provider is in ${path}, but the daemon has not loaded it; re-run to retry`);
 			delete item.pendingReload;
 		},
 
-		reversePlan: (m) => items(m, 'provider-entry').map((i) => `strip the crew provider ${i.id} from ${i.path}, then paseo reload`),
+		recorded: (m) => items(m, 'provider-entry').length > 0,
 
-		// Returns the "kept" notes of the files it put back.
-		reverse(m, report) {
-			const kept = [];
-			for (const i of items(m, 'provider-entry')) {
-				kept.push(reverseSharedFile(m, i.path, stripProviderEntry));
-				const r = reload();
-				if (r.status !== 0) report.warn(`paseo reload failed (exit ${r.status}) — ${i.path} no longer has the crew provider ${i.id}, but the daemon keeps it until it reloads (\`paseo reload\`) or restarts`);
-			}
-			return kept.filter(Boolean);
+		reversePlan: (m) => (items(m, 'provider-entry').length ? [`paseo reload, so the daemon drops the crew provider ${CREW_PROVIDER_ID}`] : []),
+
+		reload(report) {
+			const r = run(ctx, 'paseo', ['reload']);
+			if (r.status !== 0) report.warn(`paseo reload failed (exit ${r.status}) — ${path} no longer has the crew provider ${CREW_PROVIDER_ID}, but the daemon keeps it until it reloads (\`paseo reload\`) or restarts`);
 		},
 	};
 }

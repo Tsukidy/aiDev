@@ -23,8 +23,9 @@
 //                 list (path), written after it is recorded; before: what
 //                 the install put in front of it (#34)
 //   provider-entry  our provider (id) in Paseo's config.json (path), a part
-//                 of that shared file (#40); pendingReload: written, or about
-//                 to be, and the daemon not yet reloaded since
+//                 of that shared file (#40); keys: the entry's keys we set at
+//                 our last write; pendingReload: written, or about to be, and
+//                 the daemon not yet reloaded since
 //   backup        the pre-install copy of a file we modified (of), or, with
 //                 `link`, the symlink we replaced
 //   dir           a directory the install created

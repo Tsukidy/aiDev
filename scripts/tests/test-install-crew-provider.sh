@@ -82,7 +82,7 @@ check "a second install leaves config.json byte-identical" test "$(cat "$(config
 check "a second install leaves the manifest byte-identical" test "$(cat "$(manifest_of "$sb")")" = "$manifest"
 check "a second install makes no reload" test "$(reloads "$sb")" -eq 1
 uninstall_in "$sb" --dry-run
-check "the uninstall dry run names the entry and the reload" out_has "$sb" "strip the crew provider $crew from $(config_of "$sb"), then paseo reload"
+check "the uninstall dry run names the entry's file and the reload" bash -c 'grep -qF "strip our parts from $2" "$1" && grep -qF "paseo reload, so the daemon drops the crew provider $3" "$1"' _ "$sb/out.txt" "$(config_of "$sb")" "$crew"
 check "the uninstall dry run names config.json once" test "$(grep -cF "$(config_of "$sb")" "$sb/out.txt")" -eq 1
 uninstall_in "$sb" --purge --yes
 check "uninstall exits 0" test $? -eq 0
@@ -146,6 +146,17 @@ check "a re-run after the operator disabled the crew provider exits 0" test $? -
 check "the re-run keeps it disabled, and changes nothing" test "$(cat "$(config_of "$sb")")" = "$config"
 check "the re-run makes no reload" test "$(reloads "$sb")" -eq 1
 
+# ...and a key we set that the repo no longer sets goes (as after a repo
+# update that drops it); the operator's keys stay.
+sb=$(new_sandbox crew-dropped-key rich)
+install_in "$sb"
+config=$(cat "$(config_of "$sb")")
+json_edit "$(manifest_of "$sb")" '(m) => { m.items.find((i) => i.kind === "provider-entry").keys.push("dropped"); }'
+json_edit "$(config_of "$sb")" "(c) => { c.agents.providers['$crew'].dropped = true; }"
+install_in "$sb"
+check "a re-run after the repo dropped a key exits 0" test $? -eq 0
+check "the re-run removes the dropped key" test "$(cat "$(config_of "$sb")")" = "$config"
+
 # --- the operator already has a provider of that id: left alone, not recorded -------------------
 
 sb=$(new_sandbox crew-theirs rich)
@@ -201,6 +212,21 @@ check "uninstall exits 0 when its reload fails" test $? -eq 0
 check "uninstall warns that the daemon still has the provider" out_has "$sb" "warning: paseo reload failed"
 check "uninstall still restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
 
+# --- uninstall that cannot write config.json keeps its records, and a re-run finishes ----------
+
+sb=$(new_sandbox crew-unwritable)
+before=$(snapshot "$sb/home")
+install_in "$sb"
+chmod a-w "$sb/home/.paseo"
+uninstall_in "$sb" --purge --yes
+status=$?
+chmod u+w "$sb/home/.paseo"
+check "uninstall that cannot write config.json exits nonzero" test "$status" -ne 0
+check "the manifest still records the entry" recorded "$sb"
+uninstall_in "$sb" --purge --yes
+check "uninstall re-run once it can exits 0" test $? -eq 0
+check "the re-run restores the snapshot" test "$(snapshot "$sb/home")" = "$before"
+
 # --- a config.json that does not parse stops the install before any write ----------------------
 
 sb=$(new_sandbox crew-broken)
@@ -209,6 +235,15 @@ before=$(snapshot "$sb/home")
 install_in "$sb"
 check "install with a broken config.json exits nonzero" test $? -ne 0
 check "install names the file" out_has "$sb" ".paseo/config.json does not parse"
+check "install writes nothing" test "$(snapshot "$sb/home")" = "$before"
+
+# ...and so does an entry of that id that is not a JSON object.
+sb=$(new_sandbox crew-not-object rich)
+json_edit "$(config_of "$sb")" "(c) => { c.agents.providers['$crew'] = null; }"
+before=$(snapshot "$sb/home")
+install_in "$sb"
+check "install with a $crew that is not an object exits nonzero" test $? -ne 0
+check "install names it" out_has "$sb" "agents.providers.$crew is not a JSON object"
 check "install writes nothing" test "$(snapshot "$sb/home")" = "$before"
 
 summary

@@ -475,35 +475,40 @@ const CODECS = {
 		render: (v, like) => jsonLike(v, like),
 	},
 };
+// The format of a file our part is in, for a file whose record predates `format`.
+const PART_FORMAT = { 'hook-entry': 'json', 'provider-entry': 'json', 'marked-block': 'text' };
 
 // Take our parts back out of a shared file. When what is left equals the
 // pre-install backup, the backup's exact bytes come back; when the install
 // created the file and nothing else is in it, it goes. Otherwise only our
 // parts are removed and the backup is kept. Returns a "kept" note, or null.
-// The records go only once the file and its backup have been read, so a file
-// that no longer parses throws with them still in the manifest.
+// The records go only once the file is as it should be, so a file that does
+// not parse, or a write that fails, throws with them still in the manifest.
 export function reverseSharedFile(m, path, strip) {
 	const parts = partsIn(m, path);
 	const rec = sharedFile(m, path);
 	const b = backupOf(m, path);
+	const settled = (note) => {
+		for (const i of [...parts, rec, b]) if (i) drop(m, i);
+		return note;
+	};
 	const text = readText(path);
-	const codec = CODECS[rec?.format ?? (parts.some((p) => p.kind === 'hook-entry') ? 'json' : 'text')];
-	let v = text === null ? null : codec.parse(text);
-	for (const part of text === null ? [] : [...parts].reverse()) v = codec.strip(v, part, strip);
-	const original = b && existsSync(b.path) ? codec.parse(readFileSync(b.path, 'utf8')) : null;
-	for (const i of [...parts, rec, b]) if (i) drop(m, i);
-	if (text === null) return b ? `${b.path} (backup of ${path}, which was deleted after install)` : null;
-	if (original !== null && codec.same(original, v)) {
+	if (text === null) return settled(b ? `${b.path} (backup of ${path}, which was deleted after install)` : null);
+	const codec = CODECS[rec?.format ?? PART_FORMAT[parts[0]?.kind] ?? 'text'];
+	let v = codec.parse(text);
+	for (const part of [...parts].reverse()) v = codec.strip(v, part, strip);
+	const original = b && existsSync(b.path) ? readFileSync(b.path, 'utf8') : null;
+	if (original !== null && codec.same(codec.parse(original), v)) {
 		writeShared(path, readFileSync(b.path));
 		rmSync(b.path, { force: true });
-		return null;
+		return settled(null);
 	}
 	if (!b && rec && !rec.existedBefore && codec.empty(v)) {
 		rmSync(path, { force: true });
-		return null;
+		return settled(null);
 	}
 	if (!codec.same(codec.parse(text), v)) writeShared(path, codec.render(v, text));
-	return b ? `${b.path} (pre-install copy of ${path}, which changed since install; only our parts were removed)` : null;
+	return settled(b ? `${b.path} (pre-install copy of ${path}, which changed since install; only our parts were removed)` : null);
 }
 
 // How many times `line` stands as a whole line in `text`.

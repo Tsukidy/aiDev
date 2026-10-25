@@ -282,18 +282,20 @@ operator's.
 **Converging.** An entry with that id that this install did not add is
 the operator's: it is left as is, with a warning, and nothing is recorded.
 Our entry, if deleted since, is written again and reloaded. The keys the
-repo sets (above) are written again as the repo has them when they differ;
-change them in the repo, not in `config.json`. Any other key of the entry
-is yours and kept: `enabled: false`, set in Paseo's settings, survives a
-re-run.
+repo sets (above) are written again as the repo has them when they differ,
+and a key it no longer sets is removed (the manifest records the keys of
+our last write); change them in the repo, not in `config.json`. Any other
+key of the entry is yours and kept: `enabled: false`, set in Paseo's
+settings, survives a re-run.
 
-**Uninstall** takes the entry back out first, before the plugins: Paseo
-keeps plugin registrations in `config.json` too, and `paseo plugin remove`
-rewrites the file. It also removes `agents.providers` and `agents` if that
-leaves them empty. When the rest of the file is what the install found, the
-backup's exact bytes come back. Then uninstall runs `paseo reload`. If that reload fails (the daemon is down), uninstall only
-warns: the file is already put back, and the daemon drops the provider at
-its next reload or restart. An agent still running on the crew provider is
+**Uninstall** takes the entry back out with our parts of the other shared
+files, first, before any daemon call: Paseo keeps plugin registrations in
+`config.json` too, and `paseo plugin remove` rewrites the file. It also
+removes `agents.providers` and `agents` if that leaves them empty. When the
+rest of the file is what the install found, the backup's exact bytes come
+back. Then uninstall runs `paseo reload`. If that reload fails (the daemon
+is down), uninstall only warns: the file is already put back, and the
+daemon drops the provider at its next reload or restart. An agent still running on the crew provider is
 not stopped. Pick another crew provider in FirstMate settings after
 uninstall.
 
