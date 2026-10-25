@@ -147,10 +147,12 @@ export function crewProvider(ctx) {
 				config.agents.providers ??= {};
 				config.agents.providers[CREW_PROVIDER_ID] = { ...kept, ...structuredClone(CREW_PROVIDER) };
 				item ??= add(m, providerEntryItem(path, CREW_PROVIDER_ID));
-				item.keys = REPO_KEYS;
+				// Until the write is made, the keys of the last write may still be in the file.
+				item.keys = [...new Set([...(record?.keys ?? []), ...REPO_KEYS])];
 				item.pendingReload = true;
 				placeSharedFile(ctx, m, checkpoint, path, jsonLike(config, text), 'json');
 			}
+			item.keys = REPO_KEYS;
 			if (!item.pendingReload) return;
 			const r = run(ctx, 'paseo', ['reload']);
 			if (r.status !== 0) return report.error(`paseo reload failed (exit ${r.status}) — the crew provider is in ${path}, but the daemon has not loaded it; re-run to retry`);

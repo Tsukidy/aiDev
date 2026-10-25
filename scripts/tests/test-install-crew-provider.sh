@@ -118,6 +118,15 @@ check "uninstall removes our entry" config_true "$sb" "!('$crew' in c.agents.pro
 check "uninstall keeps the operator's change" config_true "$sb" "c.daemon.listen === '127.0.0.1:7777'"
 check "uninstall keeps the operator's providers" config_true "$sb" "c.agents.providers.glm.label === 'GLM Agent'"
 
+# ...and when a later step of uninstall fails, the copy of config.json it
+# kept is still reported, though the manifest no longer records it.
+sb=$(new_sandbox crew-kept-then-fail rich)
+install_in "$sb"
+json_edit "$(config_of "$sb")" '(c) => { c.daemon.listen = "127.0.0.1:7777"; }'
+run_in "$sb" full STUB_FAIL=skills-remove -- "$uninstaller" --purge --yes
+check "uninstall with a failing skills remove exits nonzero" test $? -ne 0
+check "it still reports the pre-install copy of config.json it kept" out_has "$sb" "pre-install copy of $(config_of "$sb")"
+
 # ...and with Paseo keeping plugin registrations in config.json, which
 # `paseo plugin remove` rewrites, as on an operator machine with plugins of
 # its own: uninstall takes the crew provider back first, so the backup's
@@ -156,6 +165,13 @@ json_edit "$(config_of "$sb")" "(c) => { c.agents.providers['$crew'].dropped = t
 install_in "$sb"
 check "a re-run after the repo dropped a key exits 0" test $? -eq 0
 check "the re-run removes the dropped key" test "$(cat "$(config_of "$sb")")" = "$config"
+# ...also when the run that would drop it is killed before its write.
+json_edit "$(manifest_of "$sb")" '(m) => { m.items.find((i) => i.kind === "provider-entry").keys.push("dropped"); }'
+json_edit "$(config_of "$sb")" "(c) => { c.agents.providers['$crew'].dropped = true; }"
+(run_in "$sb" full "AIDEV_TEST_KILL=record ~/.paseo/config.json" -- "$installer") 2>/dev/null
+check "the run that would drop the key was killed" test $? -ne 0
+install_in "$sb"
+check "the re-run after the kill removes the dropped key" test "$(cat "$(config_of "$sb")")" = "$config"
 
 # --- the operator already has a provider of that id: left alone, not recorded -------------------
 

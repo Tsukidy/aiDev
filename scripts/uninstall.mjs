@@ -100,7 +100,10 @@ if (flags['dry-run']) {
 	process.exit(0);
 }
 
+// The kept notes go out first: their records are gone from the manifest, so
+// a re-run would not name them.
 const fail = (msg) => {
+	for (const k of kept) report.say(`kept ${k}`);
 	saveManifest(ctx, m);
 	report.die(`${msg}; the manifest keeps what is left — fix and re-run uninstall`);
 };
